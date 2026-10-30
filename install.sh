@@ -16,8 +16,9 @@ cp ".build/release/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 # 窗口头部 logo 资源
 cp "Resources/app-icon-1024.png" "$APP_DIR/Contents/Resources/app-icon-1024.png"
-# 通知提示音：狗叫（UNUserNotificationCenter 仅识别 bundle 内 aiff）
+# 提示音资源：保留旧入口音效，并提供哈基米完成提醒。
 cp "Resources/DogBark.caf" "$APP_DIR/Contents/Resources/DogBark.caf"
+cp "Resources/HakimiComplete.caf" "$APP_DIR/Contents/Resources/HakimiComplete.caf"
 # 来源应用图标
 cp Resources/icon-catpaw.png Resources/icon-catpawide.png Resources/icon-catdesk.png Resources/icon-codex.png Resources/icon-claude.png Resources/icon-dsh.png "$APP_DIR/Contents/Resources/"
 # 菜单栏小猫图标

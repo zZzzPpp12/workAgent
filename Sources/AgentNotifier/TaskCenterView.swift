@@ -449,9 +449,13 @@ struct TaskCenterView: View {
                 settingGroup("提醒与声音") {
                     Toggle("待审批 / 待回答时通知", isOn: $preferences.value.notifyWaiting)
                     Toggle("执行失败时通知", isOn: $preferences.value.notifyFailure)
-                    Toggle("本轮结束时通知（10 秒内合并，默认静音）", isOn: $preferences.value.notifyCompleted)
+                    Toggle("本轮结束时通知（10 秒内合并）", isOn: $preferences.value.notifyCompleted)
                     Toggle("为推测状态发送通知", isOn: $preferences.value.notifyInferred)
-                    Toggle("重要提醒使用系统声音", isOn: $preferences.value.sound)
+                    Toggle("提醒使用声音", isOn: $preferences.value.sound)
+                    HStack(spacing: 10) {
+                        Text("完成提示音：哈基米 · 1.4 秒").foregroundColor(.secondary)
+                        Button("试听完成提示音") { Notify.previewCompletionSound() }
+                    }
                     Toggle("在通知中显示任务标题（默认隐藏）", isOn: $preferences.value.revealTitles)
                     Toggle("启用每日静音时段", isOn: $preferences.value.quietEnabled)
                     if preferences.value.quietEnabled {
@@ -465,7 +469,7 @@ struct TaskCenterView: View {
                         Button("应用") { preferences.value.muteUntil = defaultMuteDate }
                         Button("恢复提醒") { preferences.value.muteUntil = nil }
                     }
-                    Text("静音不会丢失待处理事项；声音通过系统通知投递，不自行播放绕过静音。").font(.caption).foregroundColor(.secondary)
+                    Text("静音不会丢失待处理事项；自动提醒声音由系统通知投递，遵循声音开关与静音设置。").font(.caption).foregroundColor(.secondary)
                 }
                 settingGroup("按来源控制提醒") {
                     ForEach(SourceGroup.allCases) { group in

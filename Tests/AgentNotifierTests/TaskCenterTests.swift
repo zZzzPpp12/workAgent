@@ -63,14 +63,66 @@ final class TaskCenterTests: XCTestCase {
         let store = TaskCenterStore(stateURL: nil, now: t)
         store.reconcile([observation(.running), observation(.running, id: "Codex:s2")], settings: .init(), at: t)
         var titles: [String] = []
-        store.deliver = { title, _, audible, _ in titles.append(title); XCTAssertFalse(audible) }
+        store.deliver = { title, _, audible, context in
+            titles.append(title)
+            XCTAssertTrue(audible)
+            XCTAssertEqual(Notify.managedSoundName(audible: audible, context: context), Notify.completionSoundName)
+        }
         store.reconcile([observation(.completed, at: t.addingTimeInterval(1)), observation(.running, id: "Codex:s2")], settings: .init(), at: t.addingTimeInterval(1))
         store.reconcile([observation(.completed, at: t.addingTimeInterval(1)), observation(.completed, id: "Codex:s2", at: t.addingTimeInterval(5))], settings: .init(), at: t.addingTimeInterval(5))
         store.flushNotifications(settings: .init(), at: t.addingTimeInterval(12))
+        store.flushNotifications(settings: .init(), at: t.addingTimeInterval(13))
         XCTAssertEqual(titles, ["2 个回合已结束 ✅"])
         let first = store.attentions.first!
         store.see(first.taskID, attentionID: first.id, at: t.addingTimeInterval(13))
         XCTAssertEqual(store.visibleItems(at: t.addingTimeInterval(13)).count, 1)
+    }
+
+    func testSingleCompletionUsesCustomSoundOnceAfterBatchWindow() {
+        let store = TaskCenterStore(stateURL: nil, now: t)
+        var sounds: [String] = []
+        store.deliver = { _, _, audible, context in
+            sounds.append(Notify.managedSoundName(audible: audible, context: context))
+            XCTAssertEqual(context["taskID"], "Codex:s1")
+        }
+        store.reconcile([observation(.running)], settings: .init(), at: t)
+        store.reconcile([observation(.completed, at: t.addingTimeInterval(1))], settings: .init(), at: t.addingTimeInterval(1))
+        XCTAssertTrue(sounds.isEmpty)
+        store.flushNotifications(settings: .init(), at: t.addingTimeInterval(12))
+        store.flushNotifications(settings: .init(), at: t.addingTimeInterval(15))
+        XCTAssertEqual(sounds, [Notify.completionSoundName])
+    }
+
+    func testCompletionSoundSwitchAppliesToSingleAndBatchNotifications() {
+        for count in [1, 2] {
+            let store = TaskCenterStore(stateURL: nil, now: t)
+            var settings = MonitorSettings()
+            settings.sound = false
+            var sounds: [String] = []
+            store.deliver = { _, _, audible, context in
+                sounds.append(Notify.managedSoundName(audible: audible, context: context))
+            }
+            store.reconcile((1...count).map { observation(.running, id: "Codex:s\($0)") }, settings: settings, at: t)
+            store.reconcile((1...count).map { observation(.completed, id: "Codex:s\($0)", at: t.addingTimeInterval(1)) }, settings: settings, at: t.addingTimeInterval(1))
+            store.flushNotifications(settings: settings, at: t.addingTimeInterval(12))
+            XCTAssertEqual(sounds, [""])
+        }
+        XCTAssertEqual(Notify.managedSoundName(audible: true, context: ["event": "failed"]), "System")
+        XCTAssertEqual(Notify.managedSoundName(audible: false, context: ["event": "stalled"]), "")
+    }
+
+    func testMutedCompletionDoesNotReplaySoundAfterUnmuting() {
+        let store = TaskCenterStore(stateURL: nil, now: t)
+        var settings = MonitorSettings()
+        settings.muteUntil = t.addingTimeInterval(60)
+        var delivered = 0
+        store.deliver = { _, _, _, _ in delivered += 1 }
+        store.reconcile([observation(.running)], settings: settings, at: t)
+        store.reconcile([observation(.completed, at: t.addingTimeInterval(1))], settings: settings, at: t.addingTimeInterval(1))
+        store.flushNotifications(settings: settings, at: t.addingTimeInterval(12))
+        store.flushNotifications(settings: .init(), at: t.addingTimeInterval(61))
+        XCTAssertEqual(delivered, 0)
+        XCTAssertEqual(store.visibleItems(at: t.addingTimeInterval(61)).count, 1)
     }
 
     func testMultipleReviewRoundsOfSameSessionAreNotClearedTogether() {

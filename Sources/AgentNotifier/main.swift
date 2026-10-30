@@ -126,6 +126,7 @@ static let deskTitleRetryInterval: TimeInterval = 60
 // MARK: - 通知
 
 enum Notify {
+static let completionSoundName = "HakimiComplete"
 private static let logLock = NSLock()
 static var managedDelivery = false
 /// 发送器可替换，便于单元测试拦截
@@ -153,14 +154,19 @@ sender = { t, b, s, c in defaultSend(title: t, body: b, sound: s, context: c) }
     /// 当前播放的音效（强引用防止播放途中被释放）
     private static var player: NSSound?
 
-    /// 自行播放提示音：UNNotificationSound(named:) 在本机对 bundle 内自定义音效
-    /// 持续解析失败（aiff 响默认音、caf 无声，三版实测），改为 App 直接 NSSound
-    /// 播放 bundle 内音频文件——该路径实测稳定可听，不再依赖通知服务解析音效
-    private static func playSound(named name: String) {
-        guard let path = Bundle.main.path(forResource: name, ofType: "caf"),
+    /// 仅供用户主动试听；自动提醒交由系统通知播放，遵循系统声音与专注模式。
+    static func previewCompletionSound() {
+        guard let path = Bundle.main.path(forResource: completionSoundName, ofType: "caf"),
               let s = NSSound(contentsOfFile: path, byReference: false) else { return }
+        player?.stop()
         player = s
         s.play()
+    }
+
+    static func managedSoundName(audible: Bool, context: [String: String]) -> String {
+        guard audible else { return "" }
+        return ["completed", "completed-group"].contains(context["event"] ?? "")
+            ? completionSoundName : "System"
     }
 
 private static func defaultSend(title: String, body: String, sound: String, context: [String: String]) {
@@ -171,7 +177,11 @@ let content = UNMutableNotificationContent()
 content.title = title
 content.body = body
 content.userInfo = context
-            content.sound = sound.isEmpty ? nil : .default
+            if sound == completionSoundName {
+                content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "\(completionSoundName).caf"))
+            } else {
+                content.sound = sound.isEmpty ? nil : .default
+            }
             let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(req) { _ in }
             return
@@ -4232,8 +4242,8 @@ struct ContentView: View {
         HStack {
             Button("发送测试通知") {
                 Notify.send(title: "Agent哈基米 测试 🐾",
-                            body: "通知链路正常，已播放当前提示音",
-                            sound: "DogBark")
+                            body: "任务完成提示音测试：哈基米 · 1.4 秒",
+                            sound: Notify.completionSoundName)
             }
 Button(action: {
 openSystemNotificationSettings()
@@ -6021,16 +6031,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         }
     }
 
-    /// 把 bundle 内的自定义提示音复制到 ~/Library/Sounds（已存在则跳过）
+    /// 同步应用专属提示音到系统搜索路径；保留已有的旧提示音副本。
     static func installCustomSounds() {
-        guard let src = Bundle.main.path(forResource: "DogBark", ofType: "caf") else { return }
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Sounds")
-        let dst = dir.appendingPathComponent("DogBark.caf")
         let fm = FileManager.default
-        guard !fm.fileExists(atPath: dst.path) else { return }
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? fm.copyItem(atPath: src, toPath: dst.path)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            for name in ["DogBark", Notify.completionSoundName] {
+                guard let src = Bundle.main.url(forResource: name, withExtension: "caf") else { continue }
+                let dst = dir.appendingPathComponent("\(name).caf")
+                if name != Notify.completionSoundName && fm.fileExists(atPath: dst.path) { continue }
+                let data = try Data(contentsOf: src)
+                if (try? Data(contentsOf: dst)) != data { try data.write(to: dst, options: .atomic) }
+            }
+        } catch {
+            Notify.log("自定义提示音同步失败：\(error.localizedDescription)")
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -6047,9 +6064,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             NSApp.applicationIconImage = icon
         }
 
-        // 自定义提示音自愈安装：notificationcenterd 对 bundle 内音效可能解析失败
-        // （实测 0.8.1 自测通知只响默认音），~/Library/Sounds 是系统音效搜索路径，
-        // 放一份副本可保证 UNNotificationSound(named:) 与 osascript 路径都能解析到
+        // 同时提供 bundle 与 ~/Library/Sounds 两个系统支持的提示音搜索位置。
         Self.installCustomSounds()
 
         // 通知权限 + 前台时也展示横幅
@@ -6091,7 +6106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         // 桌宠：先于首个通知装配（Notify 包装器必须在任何 send 前就位）
         pet.start(openMainWindow: { [weak self] in self?.showWindow() })
         monitor.center.deliver = { title, body, audible, context in
-            Notify.sender(title, body, audible ? "System" : "", context)
+            Notify.sender(title, body, Notify.managedSoundName(audible: audible, context: context), context)
         }
 
         rebuildMenu()
@@ -6282,8 +6297,8 @@ openSystemNotificationSettings()
 
     @objc private func sendTest() {
         Notify.send(title: "Agent哈基米 测试 🐾",
-                    body: "通知链路正常，已播放当前提示音",
-                    sound: "DogBark")
+                    body: "任务完成提示音测试：哈基米 · 1.4 秒",
+                    sound: Notify.completionSoundName)
     }
 
     @objc private func quit() {

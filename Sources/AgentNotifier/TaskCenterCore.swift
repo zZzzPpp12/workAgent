@@ -428,14 +428,14 @@ final class TaskCenterStore: ObservableObject {
         }
         let completions = due.filter { $0.phase == .completed }
         if completions.count > 1 {
-            deliver?("\(completions.count) 个回合已结束 ✅", "结果已加入待查看队列", false, ["event": "completed-group"])
+            deliver?("\(completions.count) 个回合已结束 ✅", "结果已加入待查看队列", settings.sound, ["event": "completed-group"])
         }
         for item in due where item.phase != .completed || completions.count == 1 {
             guard let task = task(item.taskID) else { continue }
             let title = item.phase == .completed ? "本轮已结束 ✅" : item.phase == .failed ? "任务执行失败 ⛔️" : item.phase.inferred ? "任务状态需要核实 ⚠️" : "任务\(item.phase.label) 🟡"
             let body = settings.revealTitles ? "\(task.source) · \(task.title)" : "打开任务中心查看详情"
-            deliver?(title, body, settings.sound && item.phase != .completed && !item.phase.inferred,
-                     ["attentionID": item.id, "taskID": task.id, "kind": task.source, "path": task.path])
+            deliver?(title, body, settings.sound && !item.phase.inferred,
+                     ["attentionID": item.id, "taskID": task.id, "kind": task.source, "path": task.path, "event": item.phase.rawValue])
         }
     }
 

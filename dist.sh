@@ -30,8 +30,9 @@ cp "$BIN" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 # 窗口头部 logo 资源
 cp "Resources/app-icon-1024.png" "$APP_DIR/Contents/Resources/app-icon-1024.png"
-# 通知提示音：狗叫（UNUserNotificationCenter 仅识别 bundle 内 aiff）
+# 提示音资源：保留旧入口音效，并提供哈基米完成提醒。
 cp "Resources/DogBark.caf" "$APP_DIR/Contents/Resources/DogBark.caf"
+cp "Resources/HakimiComplete.caf" "$APP_DIR/Contents/Resources/HakimiComplete.caf"
 # 来源应用图标
 cp Resources/icon-catpaw.png Resources/icon-catpawide.png Resources/icon-catdesk.png Resources/icon-codex.png Resources/icon-claude.png Resources/icon-dsh.png "$APP_DIR/Contents/Resources/"
 # 菜单栏小猫图标
@@ -90,10 +91,10 @@ AgentNotifier（Agent哈基米）— AI 编程助手会话提醒工具
 【功能】
 监控本机 CatPaw（IDEA 插件 / CatDesk）、Codex CLI、Claude Code
 会话状态并发送 macOS 系统通知：
-- 任务完成 / 回合结束（狗叫提示音）
-- 异常中断：网络请求失败、流错误等（狗叫提示音）
-- 等待手动确认：命令需在 IDE / 会话中手动执行（狗叫提示音）
-- 疑似暂停/中断：长时间无进展（狗叫提示音）
+- 任务完成 / 回合结束（1.4 秒哈基米提示音，10 秒内合并一次）
+- 异常中断：网络请求失败、流错误等（系统提示音）
+- 等待手动确认：命令需在 IDE / 会话中手动执行（系统提示音）
+- 疑似暂停/中断：长时间无进展（默认不发声）
 主窗口实时显示各会话状态（含会话标题与来源），下方内嵌通知日志
 （时间倒序）；菜单栏小猫图标显示执行中会话数。
 Dock 图标始终显示哈基米小猫 Logo，底部叠加状态条带（最多两行）：
