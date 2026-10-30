@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+dist/
+.DS_Store
+.tmp-*
+__pycache__/
+.env
+.env.*
+!.env.example
+# Markdown 文档暂留本地，不纳入提交。
+*.[mM][dD]
