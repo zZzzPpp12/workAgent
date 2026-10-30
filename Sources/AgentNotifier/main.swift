@@ -13,7 +13,7 @@ import ServiceManagement
 // MARK: - 配置
 
 struct Config {
-    static let appVersion = "0.12.2"
+    static let appVersion = "0.0.2"
     /// 轮询间隔（秒）
     static let pollInterval: TimeInterval = 3
     /// 活动停止后判定「任务完成」的宽限（秒）
@@ -165,7 +165,7 @@ sender = { t, b, s, c in defaultSend(title: t, body: b, sound: s, context: c) }
 
 private static func defaultSend(title: String, body: String, sound: String, context: [String: String]) {
 appendLog("通知投递：\(title) · 来源=\(context["kind"] ?? "任务中心")")
-// 打包为 .app 时走 UNUserNotificationCenter：通知横幅携带应用图标（聆听狗狗 logo）
+// 打包为 .app 时走 UNUserNotificationCenter：通知横幅携带应用图标（哈基米小猫 Logo）
 if Bundle.main.bundleIdentifier != nil {
 let content = UNMutableNotificationContent()
 content.title = title
@@ -1336,7 +1336,7 @@ enum DockStatus {
             NSColor(calibratedRed: 0.35, green: 0.25, blue: 0.75, alpha: 1).setFill()
             NSBezierPath(roundedRect: rect, xRadius: size.width * 0.22, yRadius: size.width * 0.22).fill()
         }
-        // 状态行（每行可多个分段）：最多两行，保证狗狗脸部不被遮挡
+        // 状态行（每行可多个分段）：最多两行，保证小猫脸部不被遮挡
         let yellow = NSColor(calibratedRed: 0.98, green: 0.80, blue: 0.25, alpha: 1)
         let green = NSColor(calibratedRed: 0.25, green: 0.85, blue: 0.50, alpha: 1)
         var lines: [[(String, NSColor)]] = []
@@ -4063,7 +4063,7 @@ struct ContentView: View {
 
     // MARK: 头部
 
-    /// 与任务中心共用哮天犬品牌形象。
+    /// 与任务中心共用哈基米小猫品牌形象。
     private var appLogo: some View {
         BrandMascotView(size: 44)
     }
@@ -4074,18 +4074,18 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
-                    Text("Agent哮天犬")
+                    Text("Agent哈基米")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.ink)
-                    // 顺风耳：正在监听会话动态
+                    // 正在监听会话动态
                     Image(systemName: "ear")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Color(red: 0.98, green: 0.80, blue: 0.25))
-                        .help("顺风耳 · 正在监听会话动态")
-                    Text("· AgentNotifier")
+                        .help("正在监听会话动态")
+                    Text("· 任务监测器")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.ink(0.45))
-                        .help("英文名：AgentNotifier（另称 Agent顺风耳）")
+                        .help("Agent哈基米 · 监测 Agent 任务与会话状态")
                 }
                 Text("v\(Config.appVersion) · CatPaw / CatDesk / Codex / Claude / Trae / DeepSeek 会话监控")
                     .font(.system(size: 11))
@@ -4231,8 +4231,8 @@ struct ContentView: View {
     private var footer: some View {
         HStack {
             Button("发送测试通知") {
-                Notify.send(title: "AgentNotifier 测试 🐾",
-                            body: "通知链路正常：提示音为狗叫（DogBark）",
+                Notify.send(title: "Agent哈基米 测试 🐾",
+                            body: "通知链路正常，已播放当前提示音",
                             sound: "DogBark")
             }
 Button(action: {
@@ -4240,24 +4240,28 @@ openSystemNotificationSettings()
 }) {
                 Label("打开通知设置", systemImage: "bell.badge")
             }
-            .help("系统设置 → 通知 → Agent哮天犬（建议提醒样式选「持续」）")
-            Button(action: {
-                if updater.latestVersion != nil {
-                    updater.performUpdate()
-                } else {
-                    updater.check(manual: true)
+            .help("系统设置 → 通知 → Agent哈基米（建议提醒样式选「持续」）")
+            if UpdateChecker.inAppUpdatesAvailable {
+                Button(action: {
+                    if updater.latestVersion != nil {
+                        updater.performUpdate()
+                    } else {
+                        updater.check(manual: true)
+                    }
+                }) {
+                    if let v = updater.latestVersion {
+                        Label("立即更新 v\(v)", systemImage: "arrow.down.circle.fill")
+                    } else {
+                        Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
+                    }
                 }
-            }) {
-                if let v = updater.latestVersion {
-                    Label("立即更新 v\(v)", systemImage: "arrow.down.circle.fill")
-                } else {
-                    Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
-                }
+                .disabled(updater.checking || updater.updating)
+                .help(updater.latestVersion != nil
+                      ? "下载最新 dmg 并自动替换安装"
+                      : "比对代码仓库 dist 目录里的最新 dmg 版本（每小时自动检查一次）")
+            } else {
+                Link("查看项目更新", destination: UpdateChecker.projectURL)
             }
-            .disabled(updater.checking || updater.updating)
-            .help(updater.latestVersion != nil
-                  ? "下载最新 dmg 并自动替换安装"
-                  : "比对代码仓库 dist 目录里的最新 dmg 版本（每小时自动检查一次）")
             if let tip = updater.tip {
                 Text(tip)
                     .font(.system(size: 11))
@@ -4285,7 +4289,7 @@ openSystemNotificationSettings()
                 }))
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .help("登录 macOS 后自动启动 AgentNotifier")
+                .help("登录 macOS 后自动启动 Agent哈基米")
             Button("退出") {
                 NSApp.terminate(nil)
             }
@@ -4306,6 +4310,10 @@ openSystemNotificationSettings()
 /// 比对版本号，有更新时底部栏提示，用户确认后自动下载并替换安装。
 @MainActor
 final class UpdateChecker: NSObject, ObservableObject {
+    /// 独立版本从 0.0.2 开始；新发布源接入前不使用原项目更新渠道。
+    static let inAppUpdatesAvailable = false
+    static let projectURL = URL(string: "https://github.com/zZzzPpp12/workAgent")!
+    static let unavailableMessage = "应用内更新暂未接入，请到 workAgent 仓库查看新版本。"
     static let listURLString = "https://dev.sankuai.com/code/repo-detail/~maohuafeng/agent-notifier-macos/file/list?branch=refs%2Fheads%2Fmaster&path=dist"
     /// AIBase 备用链路：版本记录表 PostgREST（anonKey 只读，免 SSO）；dist.sh 发版时经 mas.health 上传并登记
     static let aibaseListURL = "https://iqnxas42l4.aibase.sankuai.com/rest/v1/agent_notifier_releases?select=version,dmg_url&order=created_at.desc&limit=20"
@@ -4345,6 +4353,7 @@ final class UpdateChecker: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        guard Self.inAppUpdatesAvailable else { return }
         let config = WKWebViewConfiguration()
         // 与 CreditStore 同一个持久化 data store，共享 SSO 登录态
         if #available(macOS 14, *) {
@@ -4366,6 +4375,7 @@ final class UpdateChecker: NSObject, ObservableObject {
 
     /// 启动 20s 后先查一次，之后每小时自动查一次
     func start() {
+        guard Self.inAppUpdatesAvailable else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.check(manual: false) }
@@ -4389,6 +4399,10 @@ final class UpdateChecker: NSObject, ObservableObject {
     }
 
     func check(manual: Bool) {
+        guard Self.inAppUpdatesAvailable else {
+            if manual { showTip(Self.unavailableMessage, sticky: false) }
+            return
+        }
         guard manual || MonitorPreferences.shared.value.updatesEnabled else { return }
         guard !checking, !updating else { return }
         checking = true
@@ -4512,6 +4526,10 @@ final class UpdateChecker: NSObject, ObservableObject {
 
     /// 用户确认更新：主链路 dev 仓库网页下载；异常/超时降级到 AIBase dmg 直链；成功后替换安装并重启
     func performUpdate() {
+        guard Self.inAppUpdatesAvailable else {
+            showTip(Self.unavailableMessage, sticky: false)
+            return
+        }
         guard let version = latestVersion, !updating else { return }
         updating = true
         showTip("正在下载 v\(version)…", sticky: true)
@@ -4875,7 +4893,7 @@ final class SessionMenuRowView: NSView {
     }
 }
 
-/// 打开系统通知设置并尽力锚定到 AgentNotifier。
+/// 打开系统通知设置并尽力锚定到 Agent哈基米。
 /// macOS 没有官方「定位到具体 App」的深链（iOS 有
 /// UIApplicationOpenNotificationSettingsURLString，macOS 只能打开通知列表），
 /// 所以用 UI 脚本在搜索框输入应用名做尽力锚定；无自动化权限时静默降级为只打开列表
@@ -4888,7 +4906,7 @@ func openSystemNotificationSettings() {
             repeat with p in (every process whose name is "System Settings" or name is "System Preferences")
                 tell p
                     try
-                        set value of text field 1 of group 1 of toolbar 1 of window 1 to "AgentNotifier"
+                        set value of text field 1 of group 1 of toolbar 1 of window 1 to "Agent哈基米"
                     end try
                 end tell
             end repeat
@@ -6023,7 +6041,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         // 否则 Launchpad/应用程序里搜不到，且 quarantine 会反复触发 Gatekeeper 拦截
         if Self.relocateToApplicationsIfNeeded() { return }
 
-        // 强制使用 bundle 内的狗狗图标（避免 Dock 图标缓存返回旧爪印）
+        // 强制使用 bundle 内的小猫图标（避免 Dock 图标缓存返回旧爪印）
         if let p = Bundle.main.path(forResource: "app-icon-1024", ofType: "png"),
            let icon = NSImage(contentsOfFile: p) {
             NSApp.applicationIconImage = icon
@@ -6054,7 +6072,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         // 主窗口
         let hosting = NSHostingController(rootView: TaskCenterView(monitor: monitor, credit: creditStore, updater: updateChecker))
         let win = NSWindow(contentViewController: hosting)
-        win.title = "Agent哮天犬 · 会话监控"
+        win.title = "Agent哈基米 · 会话监控"
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
@@ -6165,13 +6183,13 @@ completionHandler()
         let n = monitor.center.runningCount
         let pending = monitor.center.actionableCount
         if button.image == nil {
-            if let p = Bundle.main.path(forResource: "menubar-dog", ofType: "png"),
+            if let p = Bundle.main.path(forResource: "menubar-cat", ofType: "png"),
                let img = NSImage(contentsOfFile: p) {
-                // 彩色狗头（非模板渲染），尺寸压到菜单栏标准 18pt
+                // 彩色小猫（非模板渲染），尺寸压到菜单栏标准 18pt
                 img.size = NSSize(width: 18, height: 18)
                 button.image = img
             } else if let img = NSImage(systemSymbolName: "pawprint.fill",
-                                        accessibilityDescription: "Agent Notifier") {
+                                        accessibilityDescription: "Agent哈基米") {
                 img.isTemplate = true
                 button.image = img
             }
@@ -6191,9 +6209,9 @@ completionHandler()
             let alert = NSAlert()
             alert.messageText = "开启系统通知 🐾"
             alert.informativeText = """
-            AgentNotifier 通过系统通知提醒你「跑完了 / 出错了 / 在等你确认」。
+            Agent哈基米 通过系统通知提醒你「跑完了 / 出错了 / 在等你确认」。
 
-            1. 在 系统设置 → 通知 → AgentNotifier 中打开「允许通知」
+            1. 在 系统设置 → 通知 → Agent哈基米 中打开「允许通知」
             2. 提醒样式建议选择「持续」——重要状态不会自动消失，回到电脑也不会错过
             """
             alert.addButton(withTitle: "打开通知设置")
@@ -6263,8 +6281,8 @@ openSystemNotificationSettings()
     }
 
     @objc private func sendTest() {
-        Notify.send(title: "AgentNotifier 测试 🐾",
-                    body: "通知链路正常：提示音为狗叫（DogBark）",
+        Notify.send(title: "Agent哈基米 测试 🐾",
+                    body: "通知链路正常，已播放当前提示音",
                     sound: "DogBark")
     }
 

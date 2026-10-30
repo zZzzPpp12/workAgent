@@ -1810,12 +1810,34 @@ func testTelemetryDeviceIdStableAndDayString() {
 /// 兜底深扫按 jsonl 末帧判定回合已结束并收敛通知
 /// 检查更新：语义化版本比较
 func testUpdateVersionCompare() {
+    XCTAssertTrue(UpdateChecker.isNewer("0.0.3", than: "0.0.2"))
+    XCTAssertFalse(UpdateChecker.isNewer("0.0.2", than: "0.0.3"))
     XCTAssertTrue(UpdateChecker.isNewer("0.10.20", than: "0.10.19"))
     XCTAssertFalse(UpdateChecker.isNewer("0.10.19", than: "0.10.20"))
     XCTAssertTrue(UpdateChecker.isNewer("0.11.0", than: "0.10.99"))
     XCTAssertFalse(UpdateChecker.isNewer("0.10.19", than: "0.10.19"))
     XCTAssertTrue(UpdateChecker.isNewer("1.0.0", than: "0.99.99"))
     XCTAssertFalse(UpdateChecker.isNewer("0.9.0", than: "0.10.0"))
+}
+
+@MainActor
+func testIndependentReleaseSkipsOriginalUpdateChannel() async {
+    let updater = UpdateChecker()
+    updater.start()
+    updater.check(manual: false)
+    XCTAssertFalse(updater.checking)
+    XCTAssertNil(updater.latestVersion)
+    XCTAssertNil(updater.tip)
+
+    updater.check(manual: true)
+    XCTAssertFalse(updater.checking)
+    XCTAssertNil(updater.latestVersion)
+    XCTAssertTrue(updater.tip?.contains("workAgent") == true)
+
+    updater.performUpdate()
+    XCTAssertFalse(updater.updating)
+    XCTAssertNil(updater.latestVersion)
+    XCTAssertTrue(updater.tip?.contains("workAgent") == true)
 }
 
 func testDeepSweepDeskSignalLost() {

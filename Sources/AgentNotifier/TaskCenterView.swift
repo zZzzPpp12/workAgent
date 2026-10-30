@@ -3,7 +3,7 @@ import AppKit
 import UserNotifications
 import ServiceManagement
 
-/// 哮天犬是固定品牌资产，主面板和引导共用原图，避免改版时被通用符号替代。
+/// 哈基米小猫是品牌资产，主面板和引导共用原图，避免改版时被通用符号替代。
 struct BrandMascotView: View {
     var size: CGFloat
     private static let mascotImage: NSImage? = Bundle.main.url(forResource: "app-icon-1024", withExtension: "png")
@@ -16,7 +16,7 @@ struct BrandMascotView: View {
             .scaledToFit()
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
-            .accessibilityLabel("哮天犬品牌形象")
+            .accessibilityLabel("哈基米小猫品牌形象")
     }
 }
 
@@ -105,7 +105,7 @@ struct TaskCenterView: View {
             VStack(spacing: 8) {
                 BrandMascotView(size: 56)
                 VStack(spacing: 3) {
-                    Text("Agent哮天犬").font(.system(size: 14, weight: .bold))
+                    Text("Agent哈基米").font(.system(size: 14, weight: .bold))
                     Text("任务监测中心").font(.system(size: 10)).foregroundColor(.secondary)
                 }
             }.frame(maxWidth: .infinity).padding(.bottom, 24)
@@ -477,7 +477,9 @@ struct TaskCenterView: View {
                 settingGroup("网络与隐私") {
                     Toggle("联网获取 Credit 额度", isOn: $preferences.value.creditEnabled)
                     Toggle("同步 CatDesk 服务端标题", isOn: $preferences.value.titlesEnabled)
-                    Toggle("自动检查应用更新", isOn: $preferences.value.updatesEnabled)
+                    if UpdateChecker.inAppUpdatesAvailable {
+                        Toggle("自动检查应用更新", isOn: $preferences.value.updatesEnabled)
+                    }
                     Toggle("允许从 Chrome 复用所需域的登录态", isOn: $preferences.value.chromeImport)
                     Text("仅额度登录失败时读取所需 SSO 域；关闭后不再导入，现有登录态保留。").font(.caption).foregroundColor(.secondary)
                     Toggle("发送可选匿名启动统计（默认关闭）", isOn: $preferences.value.telemetry)
@@ -495,14 +497,20 @@ struct TaskCenterView: View {
                     Picker("保留本地记录", selection: $preferences.value.retentionDays) { Text("7 天").tag(7); Text("30 天").tag(30); Text("90 天").tag(90) }.frame(width: 240)
                     Text("仅清理已结束的本应用记录；未解决事项保留，不删除 Agent 来源文件。").font(.caption).foregroundColor(.secondary)
                     HStack {
-                        Button("检查更新") { updater.check(manual: true) }.disabled(updater.checking)
-                        if let version = updater.latestVersion {
-                            Button("下载并安装 v\(version)") { updater.performUpdate() }.disabled(updater.updating)
+                        if UpdateChecker.inAppUpdatesAvailable {
+                            Button("检查更新") { updater.check(manual: true) }.disabled(updater.checking)
+                            if let version = updater.latestVersion {
+                                Button("下载并安装 v\(version)") { updater.performUpdate() }.disabled(updater.updating)
+                            }
+                        } else {
+                            Link("查看项目更新", destination: UpdateChecker.projectURL)
                         }
                         Button("重新查看引导") { showOnboarding = true }
                     }
                     if let tip = updater.tip { Text(tip).font(.caption).foregroundColor(.secondary) }
-                    Text("下载产物须通过签名身份与版本校验；本地临时签名构建无法自动替换为未验证的远端版本。").font(.caption).foregroundColor(.secondary)
+                    Text(UpdateChecker.inAppUpdatesAvailable
+                         ? "下载产物须通过签名身份与版本校验；本地临时签名构建无法自动替换为未验证的远端版本。"
+                         : UpdateChecker.unavailableMessage).font(.caption).foregroundColor(.secondary)
                 }
             }.font(.system(size: 12)).toggleStyle(.switch).controlSize(.small)
         }
@@ -513,7 +521,7 @@ struct TaskCenterView: View {
             HStack(spacing: 14) {
                 BrandMascotView(size: 64)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Agent哮天犬").font(.title3.bold())
+                    Text("Agent哈基米").font(.title3.bold())
                     Text("你的 Agent 任务监测伙伴").font(.callout).foregroundColor(.secondary)
                 }
             }

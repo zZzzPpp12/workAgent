@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 APP_NAME="AgentNotifier"
-VERSION="0.12.2"
+VERSION="0.0.2"
 DIST_DIR="dist"
 STAGE_DIR="$DIST_DIR/stage"
 
@@ -34,8 +34,8 @@ cp "Resources/app-icon-1024.png" "$APP_DIR/Contents/Resources/app-icon-1024.png"
 cp "Resources/DogBark.caf" "$APP_DIR/Contents/Resources/DogBark.caf"
 # 来源应用图标
 cp Resources/icon-catpaw.png Resources/icon-catpawide.png Resources/icon-catdesk.png Resources/icon-codex.png Resources/icon-claude.png Resources/icon-dsh.png "$APP_DIR/Contents/Resources/"
-# 菜单栏狗头图标
-cp "Resources/menubar-dog.png" "$APP_DIR/Contents/Resources/menubar-dog.png"
+# 菜单栏小猫图标
+cp "Resources/menubar-cat.png" "$APP_DIR/Contents/Resources/menubar-cat.png"
 # 桌宠精灵图（可选：目录不存在或缺图时运行时用 SF Symbol 占位）
 if [ -d "Resources/pet" ]; then
   mkdir -p "$APP_DIR/Contents/Resources/pet"
@@ -47,11 +47,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Agent哮天犬</string>
-<key>CFBundleDisplayName</key><string>Agent哮天犬</string>
+    <key>CFBundleName</key><string>Agent哈基米</string>
+<key>CFBundleDisplayName</key><string>Agent哈基米</string>
     <key>CFBundleIdentifier</key><string>com.maohuafeng.AgentNotifier</string>
-<key>CFBundleVersion</key><string>64</string>
-<key>CFBundleShortVersionString</key><string>0.12.2</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.0.2</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleExecutable</key><string>AgentNotifier</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -64,7 +64,7 @@ codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
 
 echo "==> 生成使用说明"
 cat > "$STAGE_DIR/❗首次安装必看（双击无反应点我）.txt" <<'README'
-AgentNotifier（Agent哮天犬）— AI 编程助手会话提醒工具
+AgentNotifier（Agent哈基米）— AI 编程助手会话提醒工具
 =====================================================
 
 【安装：推荐路径，30 秒搞定】
@@ -95,8 +95,8 @@ AgentNotifier（Agent哮天犬）— AI 编程助手会话提醒工具
 - 等待手动确认：命令需在 IDE / 会话中手动执行（狗叫提示音）
 - 疑似暂停/中断：长时间无进展（狗叫提示音）
 主窗口实时显示各会话状态（含会话标题与来源），下方内嵌通知日志
-（时间倒序）；菜单栏爪印图标显示执行中会话数。
-Dock 图标始终显示扁平化狗狗 Logo，底部叠加状态条带（最多两行）：
+（时间倒序）；菜单栏小猫图标显示执行中会话数。
+Dock 图标始终显示哈基米小猫 Logo，底部叠加状态条带（最多两行）：
 待确认（黄）/ 执行中（绿）/ 已完成（白）。待确认与执行中实时统计、
 归零自动消失；已完成按未读累计，打开主窗口即清零，
 超过 1 小时未查看也会自动消失。
@@ -104,7 +104,7 @@ Dock 图标始终显示扁平化狗狗 Logo，底部叠加状态条带（最多�
 【使用】
 - 双击启动后会出现主窗口和菜单栏图标，之后无需任何操作。
 - 关闭主窗口不会退出应用（菜单栏图标仍在）；点 Dock 图标可重新打开。
-- 开机自启：系统设置 → 通用 → 登录项 → 添加 AgentNotifier。
+- 开机自启：系统设置 → 通用 → 登录项 → 添加 Agent哈基米。
 - 运行日志：主窗口底部直接查看，或打开 ~/Library/Logs/AgentNotifier.log
 
 【判定规则】

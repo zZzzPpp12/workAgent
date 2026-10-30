@@ -20,8 +20,10 @@ cp "Resources/app-icon-1024.png" "$APP_DIR/Contents/Resources/app-icon-1024.png"
 cp "Resources/DogBark.caf" "$APP_DIR/Contents/Resources/DogBark.caf"
 # 来源应用图标
 cp Resources/icon-catpaw.png Resources/icon-catpawide.png Resources/icon-catdesk.png Resources/icon-codex.png Resources/icon-claude.png Resources/icon-dsh.png "$APP_DIR/Contents/Resources/"
-# 菜单栏狗头图标
-cp "Resources/menubar-dog.png" "$APP_DIR/Contents/Resources/menubar-dog.png"
+# 菜单栏小猫图标
+cp "Resources/menubar-cat.png" "$APP_DIR/Contents/Resources/menubar-cat.png"
+# 升级安装时清理旧品牌的菜单栏资源。
+rm -f "$APP_DIR/Contents/Resources/menubar-dog.png"
 # 桌宠精灵图（大肥鱼）
 if [ -d "Resources/pet" ]; then
   mkdir -p "$APP_DIR/Contents/Resources/pet"
@@ -33,11 +35,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Agent哮天犬</string>
-<key>CFBundleDisplayName</key><string>Agent哮天犬</string>
+    <key>CFBundleName</key><string>Agent哈基米</string>
+<key>CFBundleDisplayName</key><string>Agent哈基米</string>
     <key>CFBundleIdentifier</key><string>com.maohuafeng.AgentNotifier</string>
-<key>CFBundleVersion</key><string>64</string>
-<key>CFBundleShortVersionString</key><string>0.12.2</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.0.2</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleExecutable</key><string>AgentNotifier</string>
     <key>CFBundlePackageType</key><string>APPL</string>
