@@ -59,7 +59,7 @@ struct WorkflowCardView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
             HStack {
-                Text(task.workflow?.isPartial == true ? "最近 \(min(3, task.workflow?.steps.count ?? 0)) 个可见节点 · 日志可能有缺失" : "最近 \(min(3, task.workflow?.steps.count ?? 0)) 个节点 · 连线表示观测顺序").font(.system(size: 10)).foregroundColor(.secondary)
+                Text(task.workflow?.isPartial == true ? "最近节点预览 · 日志可能有缺失" : "最近节点预览 · 连线表示观测顺序").font(.system(size: 10)).foregroundColor(.secondary)
                 Spacer()
                 Button("展开流程图", action: onOpen).buttonStyle(.bordered).controlSize(.small)
             }
@@ -73,6 +73,7 @@ struct WorkflowCardView: View {
 struct WorkflowDetailView: View {
     let task: TaskRecord
     let attentionRunID: String?
+    var onExpandGraph: (() -> Void)? = nil
     @State private var newestFirst = true
     @State private var displayMode = "graph"
     @State private var planExpanded = false
@@ -107,7 +108,7 @@ struct WorkflowDetailView: View {
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 180)
                 }
                 if displayMode == "graph" {
-                    WorkflowGraphView(snapshot: flow, phase: task.phase)
+                    WorkflowGraphView(snapshot: flow, phase: task.phase, onExpand: onExpandGraph)
                 } else {
                     HStack {
                         Text("执行时间线").font(.system(size: 13, weight: .semibold))

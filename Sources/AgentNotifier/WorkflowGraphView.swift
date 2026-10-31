@@ -3,10 +3,13 @@ import SwiftUI
 struct WorkflowGraphView: View {
     let snapshot: WorkflowSnapshot
     let phase: TaskPhase
+    var fillsAvailableSpace = false
+    var onExpand: (() -> Void)? = nil
     @State private var selectedID: String?
     @State private var inspectedID: String?
     @State private var zoom: CGFloat = 1
     @State private var followsCurrent = true
+    @State private var locationRequest = 0
 
     private var selected: WorkflowStep? {
         snapshot.steps.first { $0.id == selectedID } ?? snapshot.currentStep
@@ -24,12 +27,21 @@ struct WorkflowGraphView: View {
                 Button { zoom = min(1.75, zoom + 0.15) } label: { Image(systemName: "plus.magnifyingglass") }
                     .disabled(zoom >= 1.75).accessibilityLabel("放大流程图")
                 Button("适合宽度") { zoom = 1 }
+                if let onExpand {
+                    Button(action: onExpand) { Label("放大查看", systemImage: "arrow.up.left.and.arrow.down.right") }
+                }
             }.buttonStyle(.bordered).controlSize(.small)
             HStack {
                 Label(snapshot.isPartial || !snapshot.hasExplicitStart ? "日志片段 · 连线按观测顺序" : "按观测顺序连接 · 不代表工具依赖", systemImage: "arrow.triangle.swap")
                     .font(.system(size: 10)).foregroundColor(.secondary)
                 Spacer(minLength: 4)
                 Toggle("跟随当前", isOn: $followsCurrent).toggleStyle(.checkbox).font(.system(size: 10))
+                Button {
+                    selectedID = nil
+                    followsCurrent = true
+                    locationRequest += 1
+                } label: { Label("定位当前", systemImage: "scope") }
+                .buttonStyle(.bordered).controlSize(.small)
             }
             GeometryReader { geometry in
                 let layout = WorkflowGraphLayout(steps: snapshot.steps, width: geometry.size.width)
@@ -37,9 +49,9 @@ struct WorkflowGraphView: View {
                     ScrollView([.horizontal, .vertical]) {
                         ZStack(alignment: .topLeading) {
                             graphBackground(layout)
-                            VStack(spacing: 46) {
+                            VStack(spacing: WorkflowGraphMetrics.rowGap) {
                                 ForEach(0..<layout.rowCount, id: \.self) { row in
-                                    HStack(spacing: 36) {
+                                    HStack(spacing: WorkflowGraphMetrics.columnGap) {
                                         ForEach(0..<layout.columns, id: \.self) { column in
                                             if let node = layout.node(row: row, column: column) {
                                                 graphNode(node)
@@ -49,7 +61,7 @@ struct WorkflowGraphView: View {
                                         }
                                     }
                                 }
-                            }.padding(26)
+                            }.padding(WorkflowGraphMetrics.canvasInset)
                         }
                         .frame(width: layout.size.width, height: layout.size.height)
                         .overlay {
@@ -70,18 +82,12 @@ struct WorkflowGraphView: View {
                     }
                     .onChange(of: snapshot.runID) { _ in selectedID = nil; inspectedID = nil; followsCurrent = true; locateCurrent(reader) }
                     .onChange(of: zoom) { _ in if followsCurrent { locateCurrent(reader) } }
-                    .overlay(alignment: .bottomTrailing) {
-                        Button {
-                            selectedID = nil
-                            followsCurrent = true
-                            locateCurrent(reader)
-                        } label: { Label("定位当前", systemImage: "scope") }
-                        .buttonStyle(.bordered).controlSize(.small)
-                        .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9)).padding(8)
-                    }
+                    .onChange(of: geometry.size.width) { _ in if followsCurrent { locateCurrent(reader) } }
+                    .onChange(of: locationRequest) { _ in locateCurrent(reader) }
                 }
             }
-            .frame(height: 310)
+            .frame(minHeight: fillsAvailableSpace ? 280 : 440, idealHeight: 440,
+                   maxHeight: fillsAvailableSpace ? .infinity : 440)
             .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
             .clipShape(RoundedRectangle(cornerRadius: 11))
             .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.primary.opacity(0.08)))
@@ -158,26 +164,30 @@ private struct WorkflowGraphNodeView: View {
     private var color: Color { step.displayStatus(for: phase).color }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 5) {
                 Image(systemName: step.kind.symbol).foregroundColor(color)
                 Text(step.kind.label).foregroundColor(.secondary)
                 Spacer(minLength: 0)
                 Text(current ? "\(step.displayStatus(for: phase).pending ? "当前" : "最近") · \(number)" : String(format: "%02d", number))
                     .foregroundColor(current ? color : .secondary)
-            }.font(.system(size: 10, weight: .medium))
-            Text(step.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            }.font(.system(size: 11, weight: .medium))
+            Text(step.title).font(.system(size: 13, weight: .semibold)).lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 4) {
-                Circle().fill(color).frame(width: 5, height: 5)
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                WorkflowActivityIndicator(state: WorkflowMotionState(step: step, phase: phase), color: color)
                 Text(step.statusLabel(for: phase)).foregroundColor(color)
                 Spacer(minLength: 0)
                 Text(WorkflowFormatting.time(step.startedAt ?? step.endedAt)).foregroundColor(.secondary).monospacedDigit()
-            }.font(.system(size: 9))
+            }.font(.system(size: 10, weight: .medium)).frame(height: WorkflowGraphMetrics.indicatorSize)
         }
-        .padding(12)
+        .padding(WorkflowGraphMetrics.contentInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background {
+            RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor))
+            RoundedRectangle(cornerRadius: 10).fill(color.opacity(current ? 0.06 : 0))
+        }
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Color.accentColor : current ? color.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: selected ? 2 : 1))
         .shadow(color: selected ? Color.accentColor.opacity(0.1) : .black.opacity(0.025), radius: selected ? 7 : 3, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 10))
@@ -185,43 +195,56 @@ private struct WorkflowGraphNodeView: View {
     }
 }
 
+private struct WorkflowActivityIndicator: View {
+    let state: WorkflowMotionState
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if state == .executing {
+                Circle().stroke(color.opacity(0.22), lineWidth: 2).padding(2.5)
+                if reduceMotion { Circle().fill(color).frame(width: 5, height: 5) }
+            } else if state == .waiting {
+                Image(systemName: "pause.fill").font(.system(size: 9, weight: .bold)).foregroundColor(color)
+            } else {
+                Circle().fill(color).frame(width: 5, height: 5)
+            }
+        }.frame(width: WorkflowGraphMetrics.indicatorSize, height: WorkflowGraphMetrics.indicatorSize)
+    }
+}
+
 struct WorkflowMiniGraphView: View {
     let snapshot: WorkflowSnapshot
     let phase: TaskPhase
     var body: some View {
-        let steps = Array(snapshot.steps.suffix(3))
-        HStack(spacing: 0) {
-            ForEach(steps) { step in
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(step.kind.label, systemImage: step.kind.symbol)
-                        .font(.system(size: 10)).foregroundColor(.secondary)
-                    Text(step.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    Text(step.statusLabel(for: phase)).font(.system(size: 9)).foregroundColor(step.displayStatus(for: phase).color)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(10).frame(height: 72)
-                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(step.displayStatus(for: phase).color.opacity(0.22)))
-                if step.id != steps.last?.id {
-                    Image(systemName: "arrow.right").font(.system(size: 11, weight: .medium)).foregroundColor(.secondary).frame(width: 28)
-                }
+        GeometryReader { geometry in
+            let layout = WorkflowMiniGraphLayout(stepCount: snapshot.steps.count, width: geometry.size.width)
+            let steps = Array(snapshot.steps.suffix(layout.frames.count))
+            let nodes = steps.enumerated().map { index, step in
+                WorkflowMotionNode(id: step.id, frame: layout.frames[index],
+                    state: WorkflowMotionState(step: step, phase: phase))
             }
-        }
-        .frame(height: 72)
-        .overlay {
-            GeometryReader { geometry in
-                let count = steps.count
-                let width = count > 0 ? (geometry.size.width - CGFloat(count - 1) * 28) / CGFloat(count) : 0
-                let nodes = steps.enumerated().map { index, step in
-                    WorkflowMotionNode(id: step.id,
-                        frame: CGRect(x: CGFloat(index) * (width + 28), y: 0, width: width, height: geometry.size.height),
-                        state: WorkflowMotionState(step: step, phase: phase))
-                }
+            ZStack(alignment: .topLeading) {
+                HStack(spacing: 0) {
+                    ForEach(steps) { step in
+                        let index = steps.firstIndex(where: { $0.id == step.id }) ?? 0
+                        WorkflowGraphNodeView(step: step, phase: phase,
+                            number: snapshot.steps.count - steps.count + index + 1,
+                            selected: false, current: snapshot.currentStep?.id == step.id)
+                            .frame(width: layout.frames[index].width, height: WorkflowGraphMetrics.nodeHeight)
+                        if step.id != steps.last?.id {
+                            Image(systemName: "arrow.right").font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.secondary).frame(width: WorkflowGraphMetrics.miniGap)
+                        }
+                    }
+                }.padding(WorkflowGraphMetrics.miniInset)
                 WorkflowMotionLayer(nodes: nodes, edges: zip(nodes, nodes.dropFirst()).map { a, b in
                     WorkflowMotionEdge(targetID: b.id,
                         start: CGPoint(x: a.frame.maxX, y: a.frame.midY), end: CGPoint(x: b.frame.minX, y: b.frame.midY))
                 })
-            }
-        }
+            }.frame(width: geometry.size.width, height: WorkflowMiniGraphLayout.height)
+        }.frame(height: WorkflowMiniGraphLayout.height)
         .accessibilityElement(children: .combine)
     }
 }

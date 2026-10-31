@@ -1,5 +1,46 @@
 import Foundation
 
+/// 卡片、动效与画布共用尺寸，确保光晕有留白、转圈始终位于状态行内部。
+enum WorkflowGraphMetrics {
+    static let nodeHeight: CGFloat = 124
+    static let contentInset: CGFloat = 14
+    static let indicatorSize: CGFloat = 18
+    static let haloOutset: CGFloat = 7
+    static let canvasInset: CGFloat = 28
+    static let columnGap: CGFloat = 52
+    static let rowGap: CGFloat = 52
+    static let miniInset: CGFloat = 12
+    static let miniGap: CGFloat = 40
+
+    static func indicatorFrame(in node: CGRect) -> CGRect {
+        CGRect(x: node.minX + contentInset, y: node.maxY - contentInset - indicatorSize,
+               width: indicatorSize, height: indicatorSize)
+    }
+}
+
+/// 窄面板减少预览节点数量，给当前节点的标题和运行状态保留可读空间。
+struct WorkflowMiniGraphLayout {
+    let frames: [CGRect]
+    static let height = WorkflowGraphMetrics.nodeHeight + WorkflowGraphMetrics.miniInset * 2
+
+    init(stepCount: Int, width: CGFloat) {
+        let inset = WorkflowGraphMetrics.miniInset
+        let gap = WorkflowGraphMetrics.miniGap
+        let width = max(inset * 2, width)
+        guard stepCount > 0, width - inset * 2 >= WorkflowGraphMetrics.contentInset * 2 + WorkflowGraphMetrics.indicatorSize else {
+            frames = []
+            return
+        }
+        let capacity = max(1, min(3, Int((width - inset * 2 + gap) / (200 + gap))))
+        let count = min(max(0, stepCount), capacity)
+        let nodeWidth = count > 0 ? max(0, (width - inset * 2 - CGFloat(count - 1) * gap) / CGFloat(count)) : 0
+        frames = (0..<count).map { index in
+            CGRect(x: inset + CGFloat(index) * (nodeWidth + gap), y: inset,
+                   width: nodeWidth, height: WorkflowGraphMetrics.nodeHeight)
+        }
+    }
+}
+
 /// 连线仅表达快照中的观测顺序，不从时间戳或工具名称推断依赖与并行关系。
 struct WorkflowGraphLayout {
     struct Node: Identifiable {
@@ -15,7 +56,7 @@ struct WorkflowGraphLayout {
     }
     let columns: Int
     var rowCount: Int { (nodes.count + columns - 1) / columns }
-    var nodeSize: CGSize { nodes.first?.frame.size ?? CGSize(width: 190, height: 100) }
+    var nodeSize: CGSize { nodes.first?.frame.size ?? CGSize(width: 220, height: WorkflowGraphMetrics.nodeHeight) }
     func node(row: Int, column: Int) -> Node? {
         let index = row * columns + (row.isMultiple(of: 2) ? column : columns - 1 - column)
         return nodes.indices.contains(index) ? nodes[index] : nil
@@ -26,11 +67,11 @@ struct WorkflowGraphLayout {
 
     init(steps: [WorkflowStep], width: CGFloat) {
         let width = max(240, width)
-        let inset: CGFloat = 26
-        let gap: CGFloat = 36
-        let height: CGFloat = 100
-        let rowGap: CGFloat = 46
-        let columns = max(1, min(3, Int((width - inset * 2 + gap) / (190 + gap))))
+        let inset = WorkflowGraphMetrics.canvasInset
+        let gap = WorkflowGraphMetrics.columnGap
+        let height = WorkflowGraphMetrics.nodeHeight
+        let rowGap = WorkflowGraphMetrics.rowGap
+        let columns = max(1, min(4, Int((width - inset * 2 + gap) / (220 + gap))))
         self.columns = columns
         let nodeWidth = (width - inset * 2 - CGFloat(columns - 1) * gap) / CGFloat(columns)
         nodes = steps.enumerated().map { index, step in

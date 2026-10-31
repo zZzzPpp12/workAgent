@@ -279,9 +279,7 @@ struct TaskCenterView: View {
                     ForEach(tasks) { task in
                         WorkflowCardView(task: task) {
                             // 查看执行过程不确认同一会话的旧回合结果。
-                            detailAttentionID = nil
-                            center.selectedTaskID = task.id
-                            detailID = task.id
+                            WorkflowWindowPresenter.shared.show(center: center, taskID: task.id)
                         }
                     }
                     Text("展示来源已经记录的步骤，不推测内部思维过程。计划仅在模型显式更新时出现。")
@@ -657,7 +655,8 @@ struct TaskDetailView: View {
                 }.pickerStyle(.segmented).frame(width: 260)
                 ScrollView {
                     if tab == "workflow" {
-                        WorkflowDetailView(task: task, attentionRunID: center.attentions.first(where: { $0.id == attentionID })?.runID)
+                        WorkflowDetailView(task: task, attentionRunID: center.attentions.first(where: { $0.id == attentionID })?.runID,
+                            onExpandGraph: { WorkflowWindowPresenter.shared.show(center: center, taskID: task.id) })
                     } else { taskInformation(task) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()

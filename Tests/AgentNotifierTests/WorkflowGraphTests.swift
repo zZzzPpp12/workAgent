@@ -46,6 +46,47 @@ final class WorkflowGraphTests: XCTestCase {
         }
     }
 
+    func testSpinnerAndGlowFitInsideBothPreviewAndFullCanvas() {
+        for width in [240.0, 420, 620, 832, 1400] {
+            let full = WorkflowGraphLayout(steps: steps(96), width: width)
+            let preview = WorkflowMiniGraphLayout(stepCount: 96, width: width)
+            let canvases = [(full.nodes.map(\.frame), full.size),
+                            (preview.frames, CGSize(width: width, height: WorkflowMiniGraphLayout.height))]
+            for (frames, size) in canvases {
+                let canvas = CGRect(origin: .zero, size: size)
+                for frame in frames {
+                    XCTAssertTrue(frame.contains(WorkflowGraphMetrics.indicatorFrame(in: frame)), "转圈应位于卡片内部")
+                    XCTAssertTrue(canvas.contains(frame.insetBy(dx: -WorkflowGraphMetrics.haloOutset, dy: -WorkflowGraphMetrics.haloOutset)), "光晕应保留在画布范围内")
+                }
+            }
+        }
+    }
+
+    func testPreviewAdaptsNodeCountWithoutSquashingCards() {
+        for width in [240.0, 420, 620, 832, 1400] {
+            for count in [1, 2, 3, 96] {
+                let layout = WorkflowMiniGraphLayout(stepCount: count, width: width)
+                XCTAssertFalse(layout.frames.isEmpty)
+                XCTAssertLessThanOrEqual(layout.frames.count, min(3, count))
+                for (index, frame) in layout.frames.enumerated() {
+                    XCTAssertGreaterThanOrEqual(frame.width, 200)
+                    for other in layout.frames.dropFirst(index + 1) {
+                        XCTAssertFalse(frame.insetBy(dx: -7, dy: -7).intersects(other.insetBy(dx: -7, dy: -7)))
+                    }
+                }
+            }
+        }
+        XCTAssertLessThan(WorkflowMiniGraphLayout(stepCount: 96, width: 420).frames.count,
+                          WorkflowMiniGraphLayout(stepCount: 96, width: 832).frames.count)
+    }
+
+    func testEmptyOrUnmeasuredPreviewDoesNotInventGeometry() {
+        XCTAssertTrue(WorkflowMiniGraphLayout(stepCount: 0, width: 832).frames.isEmpty)
+        for width in [0.0, 10, 24, 55] {
+            XCTAssertTrue(WorkflowMiniGraphLayout(stepCount: 96, width: width).frames.isEmpty)
+        }
+    }
+
     func testGraphKeepsObservedOrderWhenTimestampsGoBackwardOrAreMissing() {
         var events = steps(7)
         events[2].startedAt = nil
