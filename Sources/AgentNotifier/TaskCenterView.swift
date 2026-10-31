@@ -711,6 +711,7 @@ struct TaskDetailView: View {
 
 struct CodexSnapshotView: View {
     let quota: CodexRateLimits?
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack { Label("Codex 额度", systemImage: "bolt").font(.caption).foregroundColor(.secondary); Spacer(); Text(quota?.planType ?? "本地快照").font(.caption2).foregroundColor(.secondary) }
@@ -725,10 +726,16 @@ struct CodexSnapshotView: View {
     }
     private func window(_ label: String, used: Double?, resets: Date?, snapshot: Date?) -> some View {
         let remaining = CodexRateLimits.remaining(used: used, resetsAt: resets, snapshotAt: snapshot, now: Date())
+        let critical = (remaining ?? 100) < 30
+        let warning = !critical && (remaining ?? 100) < 50
+        let barColor: Color = remaining == nil ? .secondary : critical ? .red : warning ? .yellow : .blue
+        let warningText: Color = colorScheme == .dark ? .yellow : Color(red: 0.60, green: 0.41, blue: 0)
+        let textColor: Color = remaining == nil ? .secondary : critical ? .red : warning ? warningText : .primary
         return HStack {
             Text(label).font(.system(size: 10)).foregroundColor(.secondary).frame(width: 40, alignment: .leading)
-            ProgressView(value: remaining ?? 0, total: 100).tint((remaining ?? 100) < 15 ? .orange : .blue)
+            ProgressView(value: remaining ?? 0, total: 100).tint(barColor)
             Text(remaining.map { "剩 \(Int($0))%" } ?? (used == nil ? "未知" : "待新快照"))
+                .foregroundColor(textColor)
                 .font(.system(size: 10, weight: .medium, design: .monospaced)).frame(width: 70, alignment: .trailing)
         }.help(resets.map { "重置时间：\(TaskCenterView.time($0))" } ?? "来源未提供重置时间")
     }
