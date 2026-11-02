@@ -8,13 +8,19 @@ enum WorkflowParser {
             let date = eventDate(object["timestamp"])
             let stable = object["uuid"] as? String ?? object["messageId"] as? String
                 ?? object["ordinal"].map { String(describing: $0) } ?? stableKey(String(describing: object["timestamp"] ?? "") + ":\(index)")
-            if source == "Codex" {
-                codex(object, id: stable, at: date, flow: &flow)
-            } else if source == "Claude" || source == "CatDesk" {
-                conversation(object, id: stable, at: date, source: source, flow: &flow)
-            }
+            advance(object, source: source, id: stable, at: date, flow: &flow)
         }
         return flow.snapshot()
+    }
+
+    /// 增量历史复用当前解析语义；调用方负责稳定事件 ID、检查点和数据去重。
+    static func advance(_ object: [String: Any], source: String, id: String, at date: Date?, flow: inout WorkflowBuilder) {
+        guard object["isSidechain"] as? Bool != true else { return }
+        if source == "Codex" {
+            codex(object, id: id, at: date, flow: &flow)
+        } else if source == "Claude" || source == "CatDesk" {
+            conversation(object, id: id, at: date, source: source, flow: &flow)
+        }
     }
 
     private static func codex(_ object: [String: Any], id: String, at date: Date?, flow: inout WorkflowBuilder) {

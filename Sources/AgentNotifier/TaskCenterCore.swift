@@ -168,6 +168,13 @@ struct TaskRecord: Codable, Identifiable, Equatable {
     }
 }
 
+struct SnoozeInterval: Codable, Equatable {
+    var startedAt: Date
+    var scheduledUntil: Date
+    var endedAt: Date?
+    var invalidClock: Bool = false
+}
+
 struct AttentionRecord: Codable, Identifiable, Equatable {
     var id: String
     var taskID: String
@@ -183,7 +190,29 @@ struct AttentionRecord: Codable, Identifiable, Equatable {
     var recovered = false
     var evidence: String?
     var requestKey: String?
+    /// 与处理项一起原子保存；旧记录为空时，不能推断过去没有延后。
+    var snoozeHistory: [SnoozeInterval]? = nil
+    var snoozeHistoryComplete: Bool? = nil
     func visible(at now: Date) -> Bool { resolvedAt == nil && (snoozedUntil == nil || snoozedUntil! <= now) }
+
+    mutating func closeSnooze(at now: Date) {
+        guard var intervals = snoozeHistory, let index = intervals.lastIndex(where: { $0.endedAt == nil && !$0.invalidClock }) else { return }
+        if now < intervals[index].startedAt {
+            intervals[index].invalidClock = true
+            snoozeHistoryComplete = false
+        } else {
+            intervals[index].endedAt = min(now, intervals[index].scheduledUntil)
+        }
+        snoozeHistory = intervals
+    }
+
+    mutating func beginSnooze(at now: Date, until: Date) {
+        closeSnooze(at: now)
+        if snoozeHistory == nil { snoozeHistory = []; snoozeHistoryComplete = false }
+        snoozeHistory?.append(SnoozeInterval(startedAt: now, scheduledUntil: until))
+        snoozedUntil = until
+        seenAt = now
+    }
 }
 
 struct SourceStatus: Identifiable, Equatable {
@@ -198,7 +227,7 @@ struct SourceStatus: Identifiable, Equatable {
 }
 
 struct CenterDocument: Codable {
-    var version = 1
+    var version = 2
     var tasks: [TaskRecord] = []
     var attentions: [AttentionRecord] = []
 }
@@ -239,7 +268,7 @@ final class TaskCenterStore: ObservableObject {
         do {
             let data = try Data(contentsOf: url)
             let doc = try JSONDecoder().decode(CenterDocument.self, from: data)
-            guard doc.version == 1 else {
+            guard (1...2).contains(doc.version) else {
                 readOnly = true
                 storageIssue = "记录来自更新的数据版本，已停止覆盖；请使用匹配版本打开。"
                 return
@@ -249,7 +278,7 @@ final class TaskCenterStore: ObservableObject {
             lastEncoded = data
         } catch {
             let backup = url.appendingPathExtension("previous")
-            if let data = try? Data(contentsOf: backup), let doc = try? JSONDecoder().decode(CenterDocument.self, from: data), doc.version == 1 {
+            if let data = try? Data(contentsOf: backup), let doc = try? JSONDecoder().decode(CenterDocument.self, from: data), (1...2).contains(doc.version) {
                 tasks = doc.tasks
                 attentions = doc.attentions
                 do {
@@ -310,6 +339,7 @@ final class TaskCenterStore: ObservableObject {
                 if (newRun && item.phase != .completed) || recovered || newRequest {
                     items[index].resolvedAt = now
                     items[index].resolution = newRun ? "新回合已开始" : "来源状态已恢复或终止"
+                    items[index].closeSnooze(at: now)
                     items[index].snoozedUntil = nil
                 }
             }
@@ -326,7 +356,8 @@ final class TaskCenterStore: ObservableObject {
                     createdAt: restored ? observation.activity : now,
                     notifiedAt: restored ? now : nil,
                     deliveryAfter: phase == .completed ? max(now, batchDeadline ?? now.addingTimeInterval(10)) : now, recovered: restored,
-                    evidence: observation.evidence, requestKey: observation.interactionID))
+                    evidence: observation.evidence, requestKey: observation.interactionID,
+                    snoozeHistory: [], snoozeHistoryComplete: !restored))
             }
         }
         // A disappeared file is not proof that an outstanding request was answered.
@@ -373,6 +404,8 @@ final class TaskCenterStore: ObservableObject {
             if attentions[index].phase == .completed {
                 attentions[index].resolvedAt = now
                 attentions[index].resolution = "已查看该回合"
+                attentions[index].closeSnooze(at: now)
+                attentions[index].snoozedUntil = nil
             }
         }
         persist()
@@ -381,6 +414,8 @@ final class TaskCenterStore: ObservableObject {
         guard let index = attentions.firstIndex(where: { $0.id == id }), attentions[index].phase == .failed else { return }
         attentions[index].resolvedAt = now
         attentions[index].resolution = "用户已处理；原回合仍为失败"
+        attentions[index].closeSnooze(at: now)
+        attentions[index].snoozedUntil = nil
         persist()
     }
     func recordReturn(_ taskID: String, attentionID: String? = nil, at now: Date = Date()) {
@@ -393,19 +428,18 @@ final class TaskCenterStore: ObservableObject {
     }
     func snooze(_ id: String, minutes: Int, at now: Date = Date()) {
         guard let index = attentions.firstIndex(where: { $0.id == id }), attentions[index].resolvedAt == nil else { return }
-        attentions[index].snoozedUntil = now.addingTimeInterval(Double(minutes) * 60)
-        attentions[index].seenAt = now
+        attentions[index].beginSnooze(at: now, until: now.addingTimeInterval(Double(minutes) * 60))
         persist()
     }
-    func unsnooze(_ id: String) {
+    func unsnooze(_ id: String, at now: Date = Date()) {
         guard let index = attentions.firstIndex(where: { $0.id == id }) else { return }
+        attentions[index].closeSnooze(at: now)
         attentions[index].snoozedUntil = nil
         persist()
     }
-    func snoozeUntil(_ id: String, until: Date) {
-        guard until > Date(), let index = attentions.firstIndex(where: { $0.id == id }), attentions[index].resolvedAt == nil else { return }
-        attentions[index].snoozedUntil = until
-        attentions[index].seenAt = Date()
+    func snoozeUntil(_ id: String, until: Date, at now: Date = Date()) {
+        guard until > now, let index = attentions.firstIndex(where: { $0.id == id }), attentions[index].resolvedAt == nil else { return }
+        attentions[index].beginSnooze(at: now, until: until)
         persist()
     }
 
@@ -413,6 +447,7 @@ final class TaskCenterStore: ObservableObject {
         var due: [AttentionRecord] = []
         for index in attentions.indices where attentions[index].resolvedAt == nil {
             if let until = attentions[index].snoozedUntil, until <= now {
+                attentions[index].closeSnooze(at: until)
                 attentions[index].snoozedUntil = nil
                 attentions[index].notifiedAt = nil
                 attentions[index].deliveryAfter = now
@@ -452,7 +487,13 @@ final class TaskCenterStore: ObservableObject {
             do {
                 let fm = FileManager.default
                 try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if let prior = try? Data(contentsOf: url), let old = try? JSONDecoder().decode(CenterDocument.self, from: prior), old.version == 1 {
+                if let prior = try? Data(contentsOf: url), let old = try? JSONDecoder().decode(CenterDocument.self, from: prior), (1...2).contains(old.version) {
+                    if old.version == 1 {
+                        let migrationBackup = url.appendingPathExtension("before-history-v1")
+                        if !fm.fileExists(atPath: migrationBackup.path) {
+                            try fm.copyItem(at: url, to: migrationBackup)
+                        }
+                    }
                     try prior.write(to: url.appendingPathExtension("previous"), options: .atomic)
                 }
                 try data.write(to: url, options: .atomic)

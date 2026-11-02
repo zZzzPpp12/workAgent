@@ -2481,6 +2481,7 @@ func workingTailTurnIsCard(toolActivity: Bool, settled: Bool) -> Bool {
 
 final class Monitor: ObservableObject {
 let center = TaskCenterStore()
+let history = HistoryModel()
 private let projector = SessionProjector()
 private let scanQueue = DispatchQueue(label: "AgentNotifier.scan", qos: .utility)
 private var scanInFlight = false
@@ -2613,6 +2614,7 @@ if !settings.disabledSources.contains("CatDesk") { deliverDeskConfirmsIfAny() }
             self.center.sourceProblems = problems
             let liveSettings = MonitorPreferences.shared.value
             self.center.reconcile(observations, settings: liveSettings, at: now)
+            self.history.observe(observations, attentions: self.center.attentions, retentionDays: liveSettings.retentionDays, at: now)
             if shouldDiscover { self.center.probeSources(settings: liveSettings, at: now) }
             self.center.scanMilliseconds = elapsed
             self.runningCount = self.center.runningCount
@@ -6105,6 +6107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
 
         // 桌宠：先于首个通知装配（Notify 包装器必须在任何 send 前就位）
         pet.start(openMainWindow: { [weak self] in self?.showWindow() })
+        monitor.history.start()
         monitor.center.deliver = { title, body, audible, context in
             Notify.sender(title, body, Notify.managedSoundName(audible: audible, context: context), context)
         }

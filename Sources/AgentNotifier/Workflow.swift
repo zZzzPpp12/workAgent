@@ -87,7 +87,7 @@ struct WorkflowSnapshot: Codable, Equatable {
 }
 
 /// 单个有界日志窗口内重建，扫描重放不累加副本。
-struct WorkflowBuilder {
+struct WorkflowBuilder: Codable {
     var runID: String?
     var steps: [WorkflowStep] = []
     var plan: [WorkflowPlanStep] = []

@@ -51,6 +51,7 @@ struct TaskCenterView: View {
         ("overview", "任务总览", "square.grid.2x2"),
         ("tasks", "全部任务", "list.bullet.rectangle"),
         ("workflows", "执行工作流", "point.topleft.down.curvedto.point.bottomright.up"),
+        ("history", "工作回顾", "chart.bar.xaxis"),
         ("snoozed", "已延后", "clock"),
         ("sources", "来源接入", "point.3.connected.trianglepath.dotted"),
         ("diagnostics", "监测诊断", "waveform.path.ecg"),
@@ -67,6 +68,7 @@ struct TaskCenterView: View {
                 if let issue = center.storageIssue { notice(issue, icon: "externaldrive.badge.exclamationmark") }
                 if let clipboardFeedback { ClipboardFeedbackView(feedback: clipboardFeedback) }
                 if page == "settings" { settingsPage }
+                else if page == "history" { HistoryPage(history: monitor.history, center: center) }
                 else if page == "sources" { sourcesPage }
                 else if page == "diagnostics" { diagnosticsPage }
                 else {
@@ -89,7 +91,7 @@ struct TaskCenterView: View {
         .preferredColorScheme(UITheme(rawValue: theme)?.scheme)
         .frame(minWidth: 800, minHeight: 580)
         .sheet(isPresented: Binding(get: { detailID != nil }, set: { if !$0 { detailID = nil; center.selectedTaskID = nil } })) {
-            if let id = detailID { TaskDetailView(center: center, taskID: id, attentionID: detailAttentionID) }
+            if let id = detailID { TaskDetailView(center: center, history: monitor.history, taskID: id, attentionID: detailAttentionID) }
         }
         .sheet(isPresented: $showOnboarding) { onboarding }
         .onAppear { center.inspectPermission(); showOnboarding = !onboarded }
@@ -162,6 +164,7 @@ struct TaskCenterView: View {
     private var subtitle: String {
         switch page {
         case "workflows": return "跟随真实日志，查看模型处理、工具调用与等待交互的执行过程。"
+        case "history": return "查看跨回合记录和工作统计，旧日志可按需回填。"
         case "sources": return "接入能力如实展示，来源异常不会被当成任务失败。"
         case "settings": return "控制提醒、来源与网络功能，按你的节奏工作。"
         case "diagnostics": return "查看本次扫描、通知授权与本地存储状态。"
@@ -630,6 +633,7 @@ private struct ClipboardFeedbackView: View {
 
 struct TaskDetailView: View {
     @ObservedObject var center: TaskCenterStore
+    @ObservedObject var history: HistoryModel
     let taskID: String
     let attentionID: String?
     @Environment(\.dismiss) private var dismiss
@@ -651,13 +655,15 @@ struct TaskDetailView: View {
                 }
                 Picker("详情内容", selection: $tab) {
                     Text("执行工作流").tag("workflow")
+                    Text("历史回合").tag("history")
                     Text("任务信息").tag("info")
-                }.pickerStyle(.segmented).frame(width: 260)
+                }.pickerStyle(.segmented).frame(width: 340)
                 ScrollView {
                     if tab == "workflow" {
                         WorkflowDetailView(task: task, attentionRunID: center.attentions.first(where: { $0.id == attentionID })?.runID,
                             onExpandGraph: { WorkflowWindowPresenter.shared.show(center: center, taskID: task.id) })
-                    } else { taskInformation(task) }
+                    } else if tab == "history" { SessionHistoryView(history: history, center: center, taskID: taskID) }
+                    else { taskInformation(task) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 HStack {

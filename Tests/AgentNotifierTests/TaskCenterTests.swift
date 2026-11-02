@@ -42,6 +42,28 @@ final class TaskCenterTests: XCTestCase {
         XCTAssertEqual(delivered, 1)
     }
 
+    func testRepeatedSnoozesAreSavedWithTheAttentionAndEndAtActualCancellation() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("state.json")
+        let store = TaskCenterStore(stateURL: url, now: t)
+        store.reconcile([observation(.running)], settings: .init(), at: t)
+        store.reconcile([observation(.input, at: t.addingTimeInterval(1), request: "q")], settings: .init(), at: t.addingTimeInterval(1))
+        let id = try XCTUnwrap(store.attentions.first?.id)
+        store.snooze(id, minutes: 5, at: t.addingTimeInterval(2))
+        store.snooze(id, minutes: 5, at: t.addingTimeInterval(62))
+        store.unsnooze(id, at: t.addingTimeInterval(182))
+        store.flushPersistence()
+        let restored = TaskCenterStore(stateURL: url, now: t.addingTimeInterval(183))
+        let item = try XCTUnwrap(restored.attentions.first)
+        XCTAssertEqual(item.snoozeHistoryComplete, true)
+        XCTAssertEqual(item.snoozeHistory?.count, 2)
+        XCTAssertEqual(item.snoozeHistory?[0].endedAt?.timeIntervalSince(item.snoozeHistory![0].startedAt), 60)
+        XCTAssertEqual(item.snoozeHistory?[1].endedAt?.timeIntervalSince(item.snoozeHistory![1].startedAt), 120)
+        XCTAssertNil(item.snoozedUntil)
+    }
+
     func testOldUnresolvedRequestRequiresVerification() {
         let store = TaskCenterStore(stateURL: nil, now: t)
         store.reconcile([observation(.approval, at: t.addingTimeInterval(-18000))], settings: .init(), at: t)
@@ -225,6 +247,22 @@ final class TaskCenterTests: XCTestCase {
         store.flushPersistence()
         XCTAssertEqual(try Data(contentsOf: url), original)
         XCTAssertNotNil(store.storageIssue)
+    }
+
+    func testVersionOneMigrationKeepsOriginalBackupAcrossLaterWrites() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("state.json")
+        let original = Data(#"{"version":1,"tasks":[],"attentions":[]}"#.utf8)
+        try original.write(to: url)
+        let store = TaskCenterStore(stateURL: url, now: t)
+        store.reconcile([observation(.running)], settings: .init(), at: t)
+        store.flushPersistence()
+        store.reconcile([observation(.input, at: t.addingTimeInterval(1))], settings: .init(), at: t.addingTimeInterval(1))
+        store.flushPersistence()
+        XCTAssertEqual(try Data(contentsOf: url.appendingPathExtension("before-history-v1")), original)
+        XCTAssertEqual(try JSONDecoder().decode(CenterDocument.self, from: Data(contentsOf: url)).version, 2)
     }
 
     func testCorruptStateRecoversFromBackupAndPreservesOriginal() throws {
