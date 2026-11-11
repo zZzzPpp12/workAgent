@@ -23,7 +23,6 @@ struct BrandMascotView: View {
 struct TaskCenterView: View {
     @ObservedObject var monitor: Monitor
     @ObservedObject var center: TaskCenterStore
-    @ObservedObject var credit: CreditStore
     @ObservedObject var updater: UpdateChecker
     @ObservedObject var preferences = MonitorPreferences.shared
     @State private var page = "overview"
@@ -40,10 +39,9 @@ struct TaskCenterView: View {
     @State private var defaultMuteDate = Date().addingTimeInterval(3600)
     @State private var workflowIncludeHistory = false
 
-    init(monitor: Monitor, credit: CreditStore, updater: UpdateChecker) {
+    init(monitor: Monitor, updater: UpdateChecker) {
         self.monitor = monitor
         self.center = monitor.center
-        self.credit = credit
         self.updater = updater
     }
 
@@ -96,7 +94,6 @@ struct TaskCenterView: View {
         .sheet(isPresented: $showOnboarding) { onboarding }
         .onAppear { center.inspectPermission(); showOnboarding = !onboarded }
         .onChange(of: preferences.value) { _ in monitor.scanAndPoll() }
-        .onChange(of: preferences.value.creditEnabled) { _ in credit.applyNetworkSetting() }
         .onChange(of: center.requestedTaskID) { id in
             if let id { page = "overview"; detailAttentionID = center.requestedAttentionID; detailID = id; center.selectedTaskID = id; center.requestedTaskID = nil; center.requestedAttentionID = nil }
         }
@@ -174,27 +171,9 @@ struct TaskCenterView: View {
     }
 
     private var quotas: some View {
-        HStack(alignment: .top, spacing: 12) {
-            panel {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Credit 额度", systemImage: "creditcard").font(.caption).foregroundColor(.secondary)
-                    if !preferences.value.creditEnabled {
-                        Text("已关闭联网获取").font(.headline)
-                    } else if credit.hasData {
-                        CreditHeaderView(credit: credit)
-                        Text(credit.lastUpdated.map { "更新于 \(Self.time($0))" } ?? "数据时间未知")
-                            .font(.system(size: 9)).foregroundColor(.secondary)
-                        if let error = credit.fetchError { Text(error).font(.system(size: 9)).foregroundColor(.orange).lineLimit(1) }
-                    } else {
-                        Text(credit.needsLogin ? "需要登录后获取额度" : "正在获取额度…").font(.callout)
-                        if credit.needsLogin { Button("登录") { credit.showLogin() }.controlSize(.small) }
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-            panel {
-                CodexSnapshotView(quota: monitor.codexQuota)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        panel {
+            CodexSnapshotView(quota: monitor.codexQuota)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }.fixedSize(horizontal: false, vertical: true)
     }
 
@@ -480,16 +459,12 @@ struct TaskCenterView: View {
                     }
                 }
                 settingGroup("网络与隐私") {
-                    Toggle("联网获取 Credit 额度", isOn: $preferences.value.creditEnabled)
                     Toggle("同步 CatDesk 服务端标题", isOn: $preferences.value.titlesEnabled)
                     if UpdateChecker.inAppUpdatesAvailable {
                         Toggle("自动检查应用更新", isOn: $preferences.value.updatesEnabled)
                     }
-                    Toggle("允许从 Chrome 复用所需域的登录态", isOn: $preferences.value.chromeImport)
-                    Text("仅额度登录失败时读取所需 SSO 域；关闭后不再导入，现有登录态保留。").font(.caption).foregroundColor(.secondary)
                     Toggle("发送可选匿名启动统计（默认关闭）", isOn: $preferences.value.telemetry)
                     Text("统计使用随机安装 ID，不发送账号、用户名、会话、路径或对话。").font(.caption).foregroundColor(.secondary)
-                    Button("刷新 Credit 额度") { credit.refresh() }.disabled(!preferences.value.creditEnabled)
                 }
                 settingGroup("外观与启动") {
                     Picker("外观", selection: $theme) { Text("明亮").tag("light"); Text("暗黑").tag("dark") }.pickerStyle(.segmented).frame(width: 220)
@@ -539,7 +514,7 @@ struct TaskCenterView: View {
             Button("允许系统通知") {
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in center.inspectPermission() }
             }
-            Text("可以跳过；应用内队列照常工作。额度登录、Hook 和终端权限都不阻塞基础监测。").font(.caption).foregroundColor(.secondary)
+            Text("可以跳过；应用内队列照常工作。Hook 和终端权限都不阻塞基础监测。").font(.caption).foregroundColor(.secondary)
             HStack {
                 Spacer()
                 Button("开始使用") { onboarded = true; showOnboarding = false }.keyboardShortcut(.defaultAction)

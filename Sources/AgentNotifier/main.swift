@@ -7,7 +7,6 @@ import SQLite3
 #if canImport(LibZSTD)
 import LibZSTD
 #endif
-import CommonCrypto
 import ServiceManagement
 
 // MARK: - 配置
@@ -3087,154 +3086,6 @@ w.calibrate(now: now)
     }
 }
 
-// MARK: - Chrome SSO 登录态导入（免扫码）
-
-/// credit-hub 取数依赖 console 域的浏览器 SSO cookie。为免用户重复登录，
-/// 会话缺失/失效时先静默尝试从本机 Chrome 导入 sankuai/meituan 域的登录态
-///（UISkip 模式：只有用户历史上授权过才会成功，绝不弹授权框打扰用户），
-/// 拿不到则回退到内置登录窗（扫码一次长期有效）。
-/// 解密方式：钥匙串「Chrome Safe Storage」→ PBKDF2 派生 AES-128-CBC，
-/// v10 前缀，M80+ 明文带 32 字节 SHA256(host) 前缀。
-enum ChromeCookieImporter {
-    /// 返回成功注入的 cookie 数（0 = 未拿到或全部失败）
-    /// 钥匙串授权框会同步阻塞，因此解密与读库放后台线程，只把注入留在主线程上
-    static func importInto(_ store: WKWebsiteDataStore) async -> Int {
-        let unique = await Task.detached(priority: .userInitiated) { () -> [HTTPCookie] in
-            guard let aesKey = deriveAESKey() else { return [] }
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let bases = [home.appendingPathComponent("Library/Application Support/Google/Chrome")]
-            var cookies: [HTTPCookie] = []
-            for base in bases {
-                let profiles = ((try? FileManager.default.contentsOfDirectory(at: base, includingPropertiesForKeys: nil)) ?? [])
-                    .filter { $0.hasDirectoryPath }
-                for dir in profiles {
-                    let db = dir.appendingPathComponent("Cookies")
-                    guard FileManager.default.fileExists(atPath: db.path) else { continue }
-                    cookies.append(contentsOf: readCookies(db: db, aesKey: aesKey))
-                }
-            }
-            var seen = Set<String>()
-            return cookies.filter { seen.insert("\($0.domain)|\($0.name)|\($0.path)").inserted }
-        }.value
-        guard !unique.isEmpty else { return 0 }
-        for c in unique { await store.httpCookieStore.setCookie(c) }
-        // setCookie 逐条异步落盘，等一拍再开始取数
-        try? await Task.sleep(nanoseconds: 800_000_000)
-        return unique.count
-    }
-
-    /// 静默读 Chrome 加密密钥并 PBKDF2 派生 AES key。
-    /// kSecUseAuthenticationUISkip：历史上授权过（ACL 信任本应用）才返回数据，
-    /// 否则 errSecInteractionNotAllowed 直接放弃——绝不弹密码框。
-    private static func deriveAESKey() -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Chrome Safe Storage",
-            kSecAttrAccount as String: "Chrome",
-            kSecReturnData as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let password = item as? Data, !password.isEmpty else { return nil }
-        var derived = [UInt8](repeating: 0, count: 16)
-        let salt = [UInt8]("saltysalt".utf8)
-        let result = password.withUnsafeBytes { pwBuf -> Int32 in
-            salt.withUnsafeBytes { saltBuf -> Int32 in
-                CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2),
-                                     pwBuf.baseAddress!.assumingMemoryBound(to: Int8.self), password.count,
-                                     saltBuf.baseAddress!, salt.count,
-                                     CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1), 1003,
-                                     &derived, 16)
-            }
-        }
-        return result == Int32(kCCSuccess) ? Data(derived) : nil
-    }
-
-    private static func readCookies(db: URL, aesKey: Data) -> [HTTPCookie] {
-        // 复制到临时文件再打开，避免与运行中的 Chrome 抢锁（WAL 一并复制以读到最新写入）
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("an-ck-\(UUID().uuidString)")
-        defer {
-            for ext in ["", "-wal", "-shm", "-journal"] { try? FileManager.default.removeItem(atPath: tmp.path + ext) }
-        }
-        guard (try? FileManager.default.copyItem(at: db, to: tmp)) != nil else { return [] }
-        for ext in ["-wal", "-shm", "-journal"] {
-            let side = db.path + ext
-            if FileManager.default.fileExists(atPath: side) {
-                try? FileManager.default.copyItem(atPath: side, toPath: tmp.path + ext)
-            }
-        }
-        var dbh: OpaquePointer?
-        guard sqlite3_open_v2(tmp.path, &dbh, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_close(dbh) }
-        var stmt: OpaquePointer?
-        let sql = """
-        SELECT host_key, name, encrypted_value, path, is_secure, expires_utc
-        FROM cookies WHERE host_key IN (
-            'sankuai.com', '.sankuai.com', 'ssosv.sankuai.com', '.ssosv.sankuai.com',
-            'console.catpaw.sankuai.com', '.console.catpaw.sankuai.com',
-            'credit-hub.sankuai.com', '.credit-hub.sankuai.com'
-        )
-        """
-        guard sqlite3_prepare_v2(dbh, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        var out: [HTTPCookie] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let hostPtr = sqlite3_column_text(stmt, 0),
-                  let namePtr = sqlite3_column_text(stmt, 1) else { continue }
-            let host = String(cString: hostPtr)
-            let name = String(cString: namePtr)
-            let encLen = sqlite3_column_bytes(stmt, 2)
-            guard encLen > 19, let blob = sqlite3_column_blob(stmt, 2) else { continue }
-            let enc = Data(bytes: blob, count: Int(encLen))
-            let path = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "/"
-            let secure = sqlite3_column_int(stmt, 4) == 1
-            let expires = sqlite3_column_int64(stmt, 5)
-            guard let value = decrypt(enc, aesKey: aesKey, host: host), !value.isEmpty else { continue }
-            var props: [HTTPCookiePropertyKey: Any] = [
-                .domain: host,
-                .name: name,
-                .path: path.isEmpty ? "/" : path,
-                .value: value,
-            ]
-            if secure { props[.secure] = "TRUE" }
-            if expires > 0 {
-                // Chrome epoch（1601 微秒）→ Unix 秒
-                props[.expires] = Date(timeIntervalSince1970: Double(expires) / 1_000_000 - 11_644_473_600)
-            }
-            if let c = HTTPCookie(properties: props) { out.append(c) }
-        }
-        return out
-    }
-
-    /// v10 = AES-128-CBC(iv: 16 个空格)；M80+ 的明文带 32 字节 SHA256(host) 前缀
-    private static func decrypt(_ enc: Data, aesKey: Data, host: String) -> String? {
-        guard enc.count > 3, enc.prefix(3) == Data("v10".utf8) else { return nil }
-        let cipher = [UInt8](enc.dropFirst(3))
-        guard cipher.count % 16 == 0 else { return nil }
-        var out = [UInt8](repeating: 0, count: cipher.count)
-        var outLen = 0
-        let iv = [UInt8](repeating: 0x20, count: 16)
-        let status = aesKey.withUnsafeBytes { keyBuf -> Int32 in
-            iv.withUnsafeBytes { ivBuf -> Int32 in
-                CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(kCCOptionPKCS7Padding),
-                        keyBuf.baseAddress!, aesKey.count,
-                        ivBuf.baseAddress!,
-                        cipher, cipher.count,
-                        &out, out.count, &outLen)
-            }
-        }
-        guard status == Int32(kCCSuccess) else { return nil }
-        var plain = Data(out[..<outLen])
-        if plain.count > 32, let hostData = host.data(using: .utf8) {
-            var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
-            hostData.withUnsafeBytes { _ = CC_SHA256($0.baseAddress, CC_LONG(hostData.count), &digest) }
-            if plain.prefix(32) == Data(digest) { plain = plain.dropFirst(32) }
-        }
-        return String(data: plain, encoding: .utf8)
-    }
-}
-
 // MARK: - 匿名使用统计
 
 /// 匿名埋点：首次启动报 install、每天首次启动报 heartbeat，写入 AIBase 事件表。
@@ -3246,12 +3097,10 @@ enum Telemetry {
     private static let deviceKey = "telemetry.deviceId"
     private static let installSentKey = "telemetry.installSent"
     private static let lastHeartbeatKey = "telemetry.lastHeartbeatDay"
-    /// Credit 登录态解出的 mis（CreditStore 写入）；存在时埋点按人去重，否则按匿名设备 ID
+    /// 保留旧版本写入的标识，供兼容读取。
     static let misKey = "telemetry.mis"
 
-    /// 埋点 mis 解析链（v0.10.32）：Credit 登录态 > CatDesk sso_config.misId > 本机账号名
-    ///（美团办公 Mac 本地账号即 mis）。此前只有 Credit 看板登录成功才有 mis，
-    /// 没开过看板的设备事件 mis 全是 NULL。
+    /// 兼容旧版记录，其次尝试本地配置和系统账号。
     static func currentMis() -> String? {
         if let m = UserDefaults.standard.string(forKey: misKey), !m.isEmpty { return m }
         if let m = misFromSSOConfig(Config.ssoConfigURL) { return m }
@@ -3311,356 +3160,6 @@ enum Telemetry {
         URLSession.shared.dataTask(with: req) { _, resp, _ in
             done((resp as? HTTPURLResponse)?.statusCode == 201)
         }.resume()
-    }
-}
-
-// MARK: - Credit 用量看板
-
-/// credit-hub 只接受「console 浏览器 cookie 会话」签发的 websso token，
-/// mtsso / catdesk 换发的 AT 一律被 SSO authentication failed 拒绝（已实测）。
-/// 因此内置一个持久化 WKWebView：SSO 登录态存于应用自己的 WebKit 数据目录，
-/// 取数时在 WebView 内执行 JS：websso/token/get 取 token → 调 credit-hub 看板 API。
-@MainActor
-final class CreditStore: NSObject, WKNavigationDelegate, NSWindowDelegate, ObservableObject {
-    struct Snapshot {
-        var allocated: Double
-        var used: Double
-        var remaining: Double
-        var trend: [(date: String, value: Double)]
-    }
-    enum CreditError: LocalizedError {
-        case notLoggedIn
-        case badPayload
-        var errorDescription: String? {
-            switch self {
-            case .notLoggedIn: return "未登录 CatPaw Console"
-            case .badPayload: return "用量数据解析失败"
-            }
-        }
-    }
-
-    static let dashboardURL = URL(string: "https://console.catpaw.sankuai.com/credit-mgmt/personal")!
-    private static let consoleHost = "console.catpaw.sankuai.com"
-
-    @Published private(set) var allocated: Double = 0
-    @Published private(set) var used: Double = 0
-    @Published private(set) var remaining: Double = 0
-    @Published private(set) var trend: [(date: String, value: Double)] = []
-    @Published private(set) var hasData = false
-    @Published private(set) var needsLogin = false
-    @Published private(set) var lastUpdated: Date?
-    @Published private(set) var fetchError: String?
-
-    private let webView: WKWebView
-    private var offscreenWindow: NSWindow?
-    private var loginWindow: NSWindow?
-    private var refreshTimer: Timer?
-    private var refreshing = false
-    private var refreshTask: Task<Void, Never>?
-    /// 用户手动关过登录窗后不再自动弹，只能点头部按钮唤起
-    private var loginDismissed = false
-
-    override init() {
-        let config = WKWebViewConfiguration()
-        if #available(macOS 14, *) {
-            config.websiteDataStore = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "7F3A1C2E-5B6D-4E8F-9A0B-1C2D3E4F5A6B")!)
-        } else {
-            config.websiteDataStore = .default()
-        }
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 560, height: 760), configuration: config)
-        super.init()
-        webView.navigationDelegate = self
-        // 离屏宿主窗口：保证 WebView 在后台也能正常加载与执行 JS
-        let host = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 560, height: 760),
-                            styleMask: [.borderless], backing: .buffered, defer: false)
-        host.contentView = webView
-        host.orderBack(nil)
-        offscreenWindow = host
-    }
-
-    func start() {
-        refresh()
-        refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
-    }
-
-    func applyNetworkSetting() {
-        if MonitorPreferences.shared.value.creditEnabled { start() }
-        else {
-            refreshTask?.cancel()
-            refreshTimer?.invalidate()
-            webView.stopLoading()
-            refreshing = false
-        }
-    }
-
-    /// 头部「登录查看 Credit 用量」按钮
-    func showLogin() {
-        loginDismissed = false
-        presentLoginWindow()
-    }
-
-    func refresh() {
-        guard MonitorPreferences.shared.value.creditEnabled else { return }
-        guard !refreshing else { return }
-        refreshing = true
-        refreshTask = Task { @MainActor in
-            defer { self.refreshing = false }
-            do {
-                let snapshot = try await self.fetchSnapshot()
-                try Task.checkCancellation()
-                guard MonitorPreferences.shared.value.creditEnabled else { return }
-                self.applySnapshot(snapshot)
-            } catch CreditError.notLoggedIn {
-                self.fetchError = "登录已失效，保留上次可信额度"
-                await self.handleNotLoggedIn()
-            } catch {
-                self.fetchError = "获取失败，当前显示上次数据"
-                Notify.log("Credit 拉取失败：\(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func applySnapshot(_ snap: Snapshot) {
-        lastUpdated = Date()
-        fetchError = nil
-        self.allocated = snap.allocated
-        self.used = snap.used
-        self.remaining = snap.remaining
-        self.trend = snap.trend
-        self.hasData = true
-        if self.needsLogin { self.needsLogin = false }
-        // 只有登录窗还在展示时才需要收回（避免每次刷新都重复打「登录成功」日志）
-        if self.loginWindow?.isVisible == true { self.dismissLoginWindow() }
-    }
-
-    /// 登录态缺失：先自动从 Chrome 导入最新 SSO cookie 补救（用户 Chrome 在线时无感恢复），
-    /// 仍失败才弹内置登录窗
-    private func handleNotLoggedIn() async {
-        guard MonitorPreferences.shared.value.creditEnabled, !Task.isCancelled else { return }
-        let n = MonitorPreferences.shared.value.chromeImport ? await ChromeCookieImporter.importInto(webView.configuration.websiteDataStore) : 0
-        if n > 0 {
-            do {
-                self.applySnapshot(try await self.fetchSnapshot())
-                Notify.log("Credit：已复用 Chrome 登录态（导入 \(n) 条 cookie），免登录读取成功")
-                return
-            } catch { /* 导入后仍失败，走登录窗 */ }
-        }
-        if !self.needsLogin { Notify.log("Credit：SSO 登录态缺失，请在登录窗中完成扫码登录") }
-        self.needsLogin = true
-    }
-
-    // MARK: 私有
-
-    private func fetchSnapshot() async throws -> Snapshot {
-        try await ensureConsoleLoaded()
-        let js = """
-        const t = await fetch('/websso/token/get?client_id=518aba86d4&loginProtocol=OIDC&mode=browser&sdk=SSOWebOIDC_1.4.0').then(r => r.json());
-        if (!t.data || !t.data.access_token) return { noauth: true };
-        const h = { headers: { 'access-token': t.data.access_token } };
-        const base = 'https://credit-hub.sankuai.com/ui/credit/dashboard/personal/';
-        const n = new Date();
-        const ds = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
-        const [quota, tr] = await Promise.all([
-            fetch(base + 'today-quota', h).then(r => r.json()),
-            fetch(base + 'trend?days=7&date=' + ds, h).then(r => r.json())
-        ]);
-        if (!quota.data) return { noauth: true };
-        return { quota: quota.data, trend: tr.data || [] };
-        """
-        let raw: Any?
-        do {
-            raw = try await webView.callAsyncJavaScript(js, arguments: [:], in: nil, contentWorld: .page)
-        } catch {
-            // 页面可能正在跳转（如 SSO 重定向中），按未登录处理，下轮重试
-            throw CreditError.notLoggedIn
-        }
-        guard let dict = raw as? [String: Any] else { throw CreditError.badPayload }
-        if dict["noauth"] as? Bool == true { throw CreditError.notLoggedIn }
-        guard let quota = dict["quota"] as? [String: Any] else { throw CreditError.badPayload }
-        let num: (Any?) -> Double? = { v in
-            if let d = v as? Double { return d }
-            if let i = v as? Int { return Double(i) }
-            if let s = v as? String { return Double(s) }
-            return nil
-        }
-        guard let allocated = num(quota["allocatedQuota"]),
-              let used = num(quota["usedAmount"]),
-              let remaining = num(quota["remainingQuota"]) else { throw CreditError.badPayload }
-        var points: [(date: String, value: Double)] = []
-        if let arr = dict["trend"] as? [[String: Any]] {
-            for item in arr {
-                let d = (item["date"] as? String) ?? ""
-                if let v = num(item["credit"]) { points.append((d, v)) }
-            }
-        }
-        return Snapshot(allocated: allocated, used: used, remaining: remaining, trend: points)
-    }
-
-    /// 确保 WebView 停在 console 域（fetch 需要同源 cookie 上下文）。
-    /// 未登录时页面会被 302 到 SSO 登录页，直接抛 notLoggedIn 走登录窗流程。
-    private func ensureConsoleLoaded() async throws {
-        if webView.url?.host == Self.consoleHost { return }
-        webView.load(URLRequest(url: Self.dashboardURL))
-        for _ in 0..<50 {
-            try await Task.sleep(nanoseconds: 300_000_000)
-            guard let host = webView.url?.host, !webView.isLoading else { continue }
-            if host == Self.consoleHost {
-                for _ in 0..<20 {
-                    let state = (try? await webView.evaluateJavaScript("document.readyState")) as? String
-                    if state == "complete" || state == "interactive" { return }
-                    try await Task.sleep(nanoseconds: 300_000_000)
-                }
-                return
-            }
-            throw CreditError.notLoggedIn   // 已被重定向到 SSO 登录页
-        }
-        throw CreditError.notLoggedIn
-    }
-
-    private func presentLoginWindow() {
-        if loginWindow == nil {
-            let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 760),
-                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            win.title = "登录 CatPaw Console（登录成功后自动关闭）"
-            win.isReleasedWhenClosed = false
-            win.delegate = self
-            loginWindow = win
-        }
-        guard let win = loginWindow, !win.isVisible else { return }
-        webView.removeFromSuperview()
-        win.contentView = webView
-        win.center()
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        webView.load(URLRequest(url: Self.dashboardURL))
-        // 登录探测：每 5 秒尝试一次取数，成功即收回 WebView 并关窗
-        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] t in
-            Task { @MainActor in
-                guard let self, self.loginWindow?.isVisible == true else { t.invalidate(); return }
-                self.refresh()
-            }
-        }
-    }
-
-    private func dismissLoginWindow() {
-        guard let win = loginWindow else { return }
-        loginDismissed = false
-        webView.removeFromSuperview()
-        win.contentView = nil
-        win.close()
-        offscreenWindow?.contentView = webView
-        Notify.log("Credit：SSO 登录成功，开始读取用量看板")
-    }
-
-    /// 用户手动关掉登录窗 → 收回 WebView 到离屏宿主
-    nonisolated func windowWillClose(_ notification: Notification) {
-        Task { @MainActor in
-            if let win = self.loginWindow, notification.object as? NSWindow === win,
-               self.webView.superview != nil {
-                self.loginDismissed = true
-                self.webView.removeFromSuperview()
-                win.contentView = nil
-                self.offscreenWindow?.contentView = self.webView
-            }
-        }
-    }
-}
-
-// MARK: Credit 用量头部卡片
-
-struct CreditHeaderView: View {
-    @ObservedObject var credit: CreditStore
-
-    var body: some View {
-        Group {
-            if credit.needsLogin {
-                Button(action: { credit.showLogin() }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "person.badge.key")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("登录查看 Credit 用量")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(Color(red: 0.98, green: 0.80, blue: 0.25))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(.ultraThinMaterial))
-                    .overlay(Capsule().stroke(Color.ink(0.14), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .help("优先复用 Chrome 登录态；拿不到时扫码登录一次即可长期读取")
-            } else if credit.hasData {
-                dataCard
-            }
-        }
-    }
-
-    private var dataCard: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
-                    Image(systemName: "creditcard.fill")
-                        .font(.system(size: 8))
-                    Text("剩余 Credit")
-                        .font(.system(size: 9, weight: .medium))
-                }
-                .foregroundColor(.ink(0.5))
-                Text(Self.fmt(credit.remaining))
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundColor(.ink)
-                usageBar
-            }
-            trendBars
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.ultraThinMaterial))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.ink(0.12), lineWidth: 1))
-        .help("Credit 总量 \(Self.fmt(credit.allocated)) · 已用 \(Self.fmt(credit.used))（\(Self.pct(credit.used, credit.allocated))）")
-    }
-
-    private var usageBar: some View {
-        let ratio = credit.allocated > 0 ? min(max(credit.used / credit.allocated, 0), 1) : 0
-        return HStack(spacing: 5) {
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.ink(0.12))
-                Capsule()
-                    .fill(Color(red: 0.98, green: 0.60, blue: 0.25))
-                    .frame(width: max(2, 110 * ratio))
-            }
-            .frame(width: 110, height: 4)
-            Text("已用 \(Self.pct(credit.used, credit.allocated))")
-                .font(.system(size: 8))
-                .foregroundColor(.ink(0.4))
-        }
-    }
-
-    private var trendBars: some View {
-        let maxV = credit.trend.map(\.value).max() ?? 0
-        return HStack(alignment: .bottom, spacing: 2) {
-            ForEach(Array(credit.trend.enumerated()), id: \.offset) { _, p in
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color(red: 0.30, green: 0.65, blue: 0.98).opacity(0.85))
-                    .frame(width: 4, height: max(2, 20 * (maxV > 0 ? p.value / maxV : 0)))
-            }
-        }
-        .frame(height: 20, alignment: .bottom)
-        .help("7 日消耗趋势")
-    }
-
-    private static func fmt(_ v: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.maximumFractionDigits = 0
-        return f.string(from: NSNumber(value: v)) ?? "\(Int(v))"
-    }
-
-    private static func pct(_ used: Double, _ total: Double) -> String {
-        guard total > 0 else { return "0%" }
-        return String(format: "%.2f%%", used / total * 100)
     }
 }
 
@@ -4033,7 +3532,6 @@ struct SourcePanel: View {
 
 struct ContentView: View {
     @ObservedObject var monitor: Monitor
-    @ObservedObject var credit: CreditStore
     @ObservedObject var updater: UpdateChecker
     /// 开机自启（SMAppService，macOS 13+）
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -4104,7 +3602,6 @@ struct ContentView: View {
                     .foregroundColor(.ink(0.45))
             }
             Spacer()
-            CreditHeaderView(credit: credit)
             CodexQuotaView(quota: monitor.codexQuota, fetchedAt: monitor.codexQuotaFetchedAt)
             runningPill
             themeMenu
@@ -4367,7 +3864,7 @@ final class UpdateChecker: NSObject, ObservableObject {
         super.init()
         guard Self.inAppUpdatesAvailable else { return }
         let config = WKWebViewConfiguration()
-        // 与 CreditStore 同一个持久化 data store，共享 SSO 登录态
+        // 保留已有的持久化 WebKit 数据存储，以兼容现有登录态。
         if #available(macOS 14, *) {
             config.websiteDataStore = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "7F3A1C2E-5B6D-4E8F-9A0B-1C2D3E4F5A6B")!)
         } else {
@@ -5979,7 +5476,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     private var statusItem: NSStatusItem!
     private var window: NSWindow!
     private let monitor = Monitor()
-    private let creditStore = CreditStore()
     private let updateChecker = UpdateChecker()
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
@@ -6087,7 +5583,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         }
 
         // 主窗口
-        let hosting = NSHostingController(rootView: TaskCenterView(monitor: monitor, credit: creditStore, updater: updateChecker))
+        let hosting = NSHostingController(rootView: TaskCenterView(monitor: monitor, updater: updateChecker))
         let win = NSWindow(contentViewController: hosting)
         win.title = "Agent哈基米 · 会话监控"
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
@@ -6115,7 +5611,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         rebuildMenu()
         updateIcon()
         showWindow()
-        creditStore.start()
         updateChecker.start()
         Telemetry.reportLaunch()
         DispatchQueue.main.async { [weak self] in self?.tick() }
