@@ -4879,6 +4879,7 @@ enum PetEvent: Equatable {
 /// 桌宠可观察状态（PetView 渲染的唯一数据源）
 @MainActor
 final class PetModel: ObservableObject {
+    @Published var hovered = false
     @Published var pose: PetPose = .swim
     @Published var bubble: String?
     /// 大肥鱼手扶白牌顶部标题（如「已思考 (用时 1 秒)」）
@@ -4993,6 +4994,14 @@ final class PetModel: ObservableObject {
 final class PetHostView: NSView {
     var onSingleTap: (() -> Void)?
     var onDoubleTap: (() -> Void)?
+    var onHover: ((Bool) -> Void)?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
 
     private var dragStartMouse: NSPoint = .zero
     private var dragStartOrigin: NSPoint = .zero
@@ -5056,6 +5065,7 @@ final class PetPanel: NSPanel {
         super.init(contentRect: contentRect,
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        title = "哈基米桌宠"
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
@@ -5080,6 +5090,25 @@ final class PetPanel: NSPanel {
         let open = NSMenuItem(title: "打开主窗口", action: #selector(petOpenMain), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
+        for (title, action) in [("新建对话", #selector(petNewChat)), ("日常记录", #selector(petNotes)), ("事项提醒", #selector(petReminders)),
+                                ("任务进度跟踪", #selector(petTracking)), ("查看当前进度", #selector(petShowProgress))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            if title == "任务进度跟踪" { item.state = PetController.shared.isTrackingEnabled ? .on : .off }
+            menu.addItem(item)
+        }
+        let skins = NSMenu()
+        for skin in PetSkin.allCases {
+            let item = NSMenuItem(title: skin.rawValue, action: #selector(petSelectSkin(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = skin.rawValue
+            item.state = !PetAppearance.shared.custom && PetAppearance.shared.skin == skin ? .on : .off
+            skins.addItem(item)
+        }
+        skins.addItem(.separator())
+        let custom = NSMenuItem(title: "导入自定义 GIF…", action: #selector(petCustomGIF), keyEquivalent: "")
+        custom.target = self; skins.addItem(custom)
+        let appearance = NSMenuItem(title: "宠物形象", action: nil, keyEquivalent: "")
+        appearance.submenu = skins; menu.addItem(appearance)
         let resetPos = NSMenuItem(title: "重置到右下角", action: #selector(petResetPosition), keyEquivalent: "")
         resetPos.target = self
         menu.addItem(resetPos)
@@ -5088,7 +5117,7 @@ final class PetPanel: NSPanel {
         wander.state = PetController.shared.isWanderEnabled ? .on : .off
         menu.addItem(wander)
         menu.addItem(.separator())
-        let hide = NSMenuItem(title: "隐藏桌宠 🐟", action: #selector(petHide), keyEquivalent: "")
+        let hide = NSMenuItem(title: "收回宠物", action: #selector(petHide), keyEquivalent: "")
         hide.target = self
         menu.addItem(hide)
         // event.locationInWindow 是窗口坐标；转成 content view 坐标再弹菜单
@@ -5096,6 +5125,20 @@ final class PetPanel: NSPanel {
         menu.popUp(positioning: nil, at: at, in: contentView)
     }
 
+    @objc private func petSelectSkin(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let skin = PetSkin(rawValue: raw) { PetAppearance.shared.select(skin) }
+    }
+    @objc private func petCustomGIF() {
+        PetAppearance.shared.importGIF()
+        if let issue = PetAppearance.shared.issue {
+            let alert = NSAlert(); alert.messageText = issue; alert.runModal()
+        }
+    }
+    @objc private func petNewChat() { PetChatPresenter.shared.show(near: frame) }
+    @objc private func petNotes() { PetCompanion.shared.showNotes() }
+    @objc private func petReminders() { PetCompanion.shared.showReminders() }
+    @objc private func petShowProgress() { PetController.shared.showProgress() }
+    @objc private func petTracking() { PetController.shared.setTrackingEnabled(!PetController.shared.isTrackingEnabled) }
     @objc private func petOpenMain() { PetController.shared.openMainWindow?() }
     @objc private func petResetPosition() { PetController.shared.resetToBottomRight() }
     @objc private func petToggleWander() {
@@ -5109,106 +5152,23 @@ struct PetView: View {
     @ObservedObject var model: PetModel
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: Config.petWanderInterval)) { _ in
-            ZStack(alignment: .bottom) {
-                if model.usingFallbackArt, let bubble = model.bubble {
-                    fallbackBubbleCard(bubble)
+        VStack(spacing: 0) {
+            PetAnimatedImage(appearance: .shared, hovered: model.hovered)
+                .frame(width: 180, height: 180)
+                .overlay(alignment: .topTrailing) {
+                    if model.pose != .swim || model.activeRunningCount > 0 {
+                        Image(systemName: model.pose == .celebrate ? "checkmark.circle.fill" : model.pose == .alert ? "bell.badge.fill" : model.pose == .sad ? "exclamationmark.triangle.fill" : "ellipsis.bubble.fill")
+                            .font(.title2).foregroundColor(model.pose == .celebrate ? .green : .blue)
+                            .padding(6).background(.thinMaterial, in: Circle())
+                    }
                 }
-                spriteWithSign
+            if let text = model.bubble {
+                Text(text).font(.caption).padding(5).background(.thinMaterial, in: Capsule())
             }
-            .frame(width: 220, height: 215, alignment: .bottom)
-        }
-        .allowsHitTesting(false)
+        }.frame(width: 220, height: 215, alignment: .bottom)
+            .allowsHitTesting(false)
     }
 
-    private var spriteWithSign: some View {
-        ZStack(alignment: .bottom) {
-            if let img = model.currentFrame {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: Config.petSize.width, height: Config.petSize.height)
-                    // 精灵图内嵌了白色手扶牌，不再镜像翻转以保证手指压框与文字方向一致
-                if !model.usingFallbackArt {
-                    signOverlay
-                }
-            } else {
-                Image(systemName: "fish.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.cyan)
-            }
-        }
-        .scaleEffect(x: model.wobble ? 1.05 : 1.0, y: model.wobble ? 0.95 : 1.0)
-        .offset(y: bobOffset)
-    }
-
-    /// 大肥鱼手扶白牌内的文字层（按 726×726 裁切图的白框内部坐标 20...706 × 538...714 比例映射）
-    private var signOverlay: some View {
-        let sign = model.currentSignContent
-        let w = Config.petSize.width * 0.88
-        let h = Config.petSize.height * 0.22
-        let bottomPad = Config.petSize.height * 0.025
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text(sign.header)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(sign.isAlert
-                        ? Color(red: 0.82, green: 0.24, blue: 0.16)
-                        : Color(white: 0.45))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(Color(white: 0.48))
-                Spacer(minLength: 0)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Circle()
-                    .fill(sign.isAlert
-                        ? Color(red: 0.90, green: 0.32, blue: 0.20)
-                        : Color(white: 0.56))
-                    .frame(width: 4.5, height: 4.5)
-                    .offset(y: -1)
-                Text(sign.detail)
-                    .font(.system(size: 11.5, weight: sign.isAlert ? .semibold : .medium))
-                    .foregroundColor(sign.isAlert
-                        ? Color(red: 0.72, green: 0.14, blue: 0.12)
-                        : Color(white: 0.28))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(width: w, height: h, alignment: .leading)
-        .offset(y: -bottomPad)
-    }
-
-    /// 游动时的上下浮动（Celebrating 姿势跳动更大）
-    private var bobOffset: CGFloat {
-        switch model.pose {
-        case .celebrate: return -6
-        case .alert: return -2
-        default: return 0
-        }
-    }
-
-    private func fallbackBubbleCard(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(.primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.thinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                    )
-            )
-            .fixedSize()
-            .offset(y: 4)
-    }
 }
 
 /// 桌宠总控：窗口生命周期、游荡循环、事件接入、额度检查、持久化
@@ -5220,6 +5180,49 @@ final class PetController {
     var openMainWindow: (() -> Void)?
 
     private var panel: PetPanel?
+    private var progressPanel: PetProgressPanel?
+    let progress = PetProgressModel()
+    var openTask: ((String) -> Void)?
+    var isTrackingEnabled: Bool { defaults.object(forKey: "pet.tracking") as? Bool ?? true }
+    func setTrackingEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: "pet.tracking")
+        refreshProgressPanel()
+    }
+    func updateTasks(_ tasks: [TaskRecord], now: Date = Date()) {
+        let own = PetChatStore.shared.chats.filter { $0.phase == .running || now.timeIntervalSince($0.updatedAt) < 120 }.map { chat in
+            PetTaskProgress(id: "hakimi:" + chat.id, title: MonitorPreferences.shared.value.revealTitles ? chat.title : "当前任务", source: "哈基米 · Codex", phase: chat.phase,
+                steps: chat.progress.enumerated().map { index, text in
+                    WorkflowStep(id: chat.id + ":" + String(index), kind: .model, title: text, status: index == chat.progress.count - 1 && chat.phase == .running ? .active : .returned)
+                }, activity: chat.updatedAt)
+        }
+        let owned = Set(PetChatStore.shared.chats.compactMap { $0.sessionID }.map { "Codex:" + $0 })
+        progress.update(own + PetTaskProgress.collect(tasks.filter { !owned.contains($0.id) }, now: now, revealTitles: MonitorPreferences.shared.value.revealTitles))
+        refreshProgressPanel()
+    }
+    func showProgress() {
+        refreshProgressPanel()
+        progressPanel?.makeKeyAndOrderFront(nil)
+    }
+    private func refreshProgressPanel() {
+        guard isEnabled, isTrackingEnabled, !PetCompanion.shared.isPresentingReminder, !progress.tasks.isEmpty, let pet = panel else { progressPanel?.orderOut(nil); return }
+        if progressPanel == nil {
+            let bubble = PetProgressPanel(contentRect: NSRect(x: 0, y: 0, width: 318, height: 250),
+                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            bubble.title = "哈基米任务进度"
+            bubble.isOpaque = false; bubble.backgroundColor = .clear; bubble.level = .statusBar
+            bubble.hidesOnDeactivate = false; bubble.isReleasedWhenClosed = false
+            bubble.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            bubble.contentView = NSHostingView(rootView: PetProgressBubble(model: progress, openTask: { [weak self] in self?.openTask?($0) }))
+            progressPanel = bubble
+        }
+        guard let bubble = progressPanel else { return }
+        guard let screen = nearestScreen(to: pet.frame)?.visibleFrame ?? NSScreen.main?.visibleFrame else { return }
+        let x = min(max(screen.minX, pet.frame.midX - bubble.frame.width / 2), screen.maxX - bubble.frame.width)
+        let top = pet.frame.maxY + 4
+        let y = top + bubble.frame.height <= screen.maxY ? top : max(screen.minY, pet.frame.minY - bubble.frame.height - 4)
+        bubble.setFrameOrigin(NSPoint(x: x, y: y))
+        bubble.orderFrontRegardless()
+    }
     private var wanderTimer: Timer?
     private var moveObserver: NSObjectProtocol?
     private var notifyInstalled = false
@@ -5246,6 +5249,12 @@ final class PetController {
 
     func start(openMainWindow: @escaping () -> Void) {
         self.openMainWindow = openMainWindow
+        PetCompanion.shared.start()
+        PetCompanion.shared.anchor = { [weak self] in self?.panel?.frame }
+        PetCompanion.shared.presentReminder = { [weak self] in
+            self?.model.react(to: .alert(sessionTitle: "事项到点了", kind: nil, path: nil))
+            self?.refreshProgressPanel()
+        }
         installNotifyWrapper()
         guard isEnabled else { return }
         showPet()
@@ -5260,6 +5269,7 @@ final class PetController {
             Notify.log("桌宠：显示")
         } else {
             panel?.orderOut(nil)
+            progressPanel?.orderOut(nil)
             wanderTimer?.invalidate()
             wanderTimer = nil
             Notify.log("桌宠：隐藏")
@@ -5289,6 +5299,7 @@ final class PetController {
         if clamped != p.frame.origin {
             p.setFrameOrigin(clamped)
         }
+        refreshProgressPanel()
         baseY = clamped.y
         targetX = nil
         defaults.set(Double(clamped.x), forKey: "pet.x")
@@ -5300,14 +5311,8 @@ final class PetController {
             let size = NSSize(width: 220, height: 215)
             let origin = restoredOrigin(panelSize: size)
             let p = PetPanel(contentRect: NSRect(origin: origin, size: size))
-            p.hostView.onSingleTap = { [weak self] in
-                guard let self else { return }
-                if let s = self.model.bubbleSession {
-                    SourceOpener.open(kindRaw: s.kind, path: s.path)
-                } else {
-                    self.model.pat()
-                }
-            }
+            p.hostView.onHover = { [weak self] in self?.model.hovered = $0 }
+            p.hostView.onSingleTap = { [weak self] in self?.openMainWindow?() }
             p.hostView.onDoubleTap = { [weak self] in
                 self?.openMainWindow?()
             }
@@ -5320,6 +5325,7 @@ final class PetController {
         guard let p = panel else { return }
         baseY = p.frame.origin.y
         p.orderFrontRegardless()
+        refreshProgressPanel()
         startWanderTimer()
     }
 
@@ -5603,6 +5609,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
 
         // 桌宠：先于首个通知装配（Notify 包装器必须在任何 send 前就位）
         pet.start(openMainWindow: { [weak self] in self?.showWindow() })
+        PetChatStore.shared.openMainWindow = { [weak self] in self?.showWindow() }
+        PetChatStore.shared.terminal = { chat in
+            let settings = MonitorPreferences.shared.value
+            let finished = chat.phase == .completed
+            if finished { PetController.shared.model.react(to: .celebrate(sessionTitle: settings.revealTitles ? chat.title : nil)) }
+            else { PetController.shared.model.react(to: .sad(sessionTitle: settings.revealTitles ? chat.title : nil)) }
+            guard !settings.isQuiet(at: Date()), !settings.mutedSources.contains("Codex"), (finished ? settings.notifyCompleted : settings.notifyFailure) else { return }
+            let context = ["petChatID": chat.id, "event": finished ? "completed" : "failed", "kind": "Codex"]
+            Notify.sender(finished ? "本轮已结束 ✅" : "任务执行失败 ⛔️", settings.revealTitles ? chat.title : "打开哈基米查看任务", Notify.managedSoundName(audible: settings.sound, context: context), context)
+        }
+        PetChatStore.shared.changed = { [weak self] in
+            guard let self else { return }
+            self.pet.updateTasks(self.monitor.center.tasks)
+        }
+        pet.openTask = { [weak self] id in
+            if id.hasPrefix("hakimi:") {
+                PetChatStore.shared.selectedID = String(id.dropFirst(7))
+                PetChatStore.shared.reveal()
+                return
+            }
+            self?.showWindow()
+            self?.monitor.center.requestedTaskID = id
+        }
         monitor.history.start()
         monitor.center.deliver = { title, body, audible, context in
             Notify.sender(title, body, Notify.managedSoundName(audible: audible, context: context), context)
@@ -5630,6 +5659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        PetChatStore.shared.shutdown()
         monitor.center.persist()
         monitor.center.flushPersistence()
     }
@@ -5661,7 +5691,11 @@ let kind = info["kind"] as? String
 let path = info["path"] as? String
 let taskID = info["taskID"] as? String
 let attentionID = info["attentionID"] as? String
+let petNoteID = info["petNoteID"] as? String
+let petChatID = info["petChatID"] as? String
 Task { @MainActor in
+    if petNoteID != nil { PetCompanion.shared.showNotes(); return }
+    if let petChatID { PetChatStore.shared.selectedID = petChatID; PetChatStore.shared.reveal(); return }
     if let delegate = Entry.delegate {
         UserDefaults.standard.set("overview", forKey: "r1.page")
         delegate.showWindow()
@@ -5687,6 +5721,8 @@ completionHandler()
         lastTickAt = Date()
         monitor.scanAndPoll()
         pet.tickStatus(runningCount: monitor.runningCount, quota: monitor.codexQuota)
+        pet.updateTasks(monitor.center.tasks)
+        PetCompanion.shared.tick()
         updateIcon()
         rebuildMenu()
     }
@@ -5742,7 +5778,7 @@ openSystemNotificationSettings()
         openItem.target = self
         menu.addItem(openItem)
         // 菜单每 3s 重建：开关状态从 UserDefaults 读取（setEnabled 是唯一写入方）
-        let petItem = NSMenuItem(title: pet.isEnabled ? "隐藏桌宠 🐟" : "显示桌宠 🐟",
+        let petItem = NSMenuItem(title: pet.isEnabled ? "收回宠物" : "显示桌宠 🐟",
                                  action: #selector(togglePet), keyEquivalent: "")
         petItem.target = self
         petItem.state = pet.isEnabled ? .on : .off

@@ -21,6 +21,7 @@ struct BrandMascotView: View {
 }
 
 struct TaskCenterView: View {
+    @ObservedObject var chats = PetChatStore.shared
     @ObservedObject var monitor: Monitor
     @ObservedObject var center: TaskCenterStore
     @ObservedObject var updater: UpdateChecker
@@ -46,6 +47,7 @@ struct TaskCenterView: View {
     }
 
     private let pages: [(String, String, String)] = [
+        ("conversations", "对话与执行", "bubble.left.and.text.bubble.right"),
         ("overview", "任务总览", "square.grid.2x2"),
         ("tasks", "全部任务", "list.bullet.rectangle"),
         ("workflows", "执行工作流", "point.topleft.down.curvedto.point.bottomright.up"),
@@ -65,7 +67,8 @@ struct TaskCenterView: View {
                 if let message = center.navigationMessage { notice(message, icon: "arrow.up.forward.app", color: .blue) }
                 if let issue = center.storageIssue { notice(issue, icon: "externaldrive.badge.exclamationmark") }
                 if let clipboardFeedback { ClipboardFeedbackView(feedback: clipboardFeedback) }
-                if page == "settings" { settingsPage }
+                if page == "conversations" { PetChatPage(store: chats) }
+                else if page == "settings" { settingsPage }
                 else if page == "history" { HistoryPage(history: monitor.history, center: center) }
                 else if page == "sources" { sourcesPage }
                 else if page == "diagnostics" { diagnosticsPage }
@@ -93,6 +96,7 @@ struct TaskCenterView: View {
         }
         .sheet(isPresented: $showOnboarding) { onboarding }
         .onAppear { center.inspectPermission(); showOnboarding = !onboarded }
+        .onChange(of: chats.openRequest) { _ in page = "conversations" }
         .onChange(of: preferences.value) { _ in monitor.scanAndPoll() }
         .onChange(of: center.requestedTaskID) { id in
             if let id { page = "overview"; detailAttentionID = center.requestedAttentionID; detailID = id; center.selectedTaskID = id; center.requestedTaskID = nil; center.requestedAttentionID = nil }
@@ -160,6 +164,7 @@ struct TaskCenterView: View {
     }
     private var subtitle: String {
         switch page {
+        case "conversations": return "在主窗口发起任务，桌宠随时展示进展。"
         case "workflows": return "跟随真实日志，查看模型处理、工具调用与等待交互的执行过程。"
         case "history": return "查看跨回合记录和工作统计，旧日志可按需回填。"
         case "sources": return "接入能力如实展示，来源异常不会被当成任务失败。"
@@ -465,6 +470,23 @@ struct TaskCenterView: View {
                     }
                     Toggle("发送可选匿名启动统计（默认关闭）", isOn: $preferences.value.telemetry)
                     Text("统计使用随机安装 ID，不发送账号、用户名、会话、路径或对话。").font(.caption).foregroundColor(.secondary)
+                }
+                settingGroup("桌宠与随手记") {
+                    Toggle("任务进度跟踪", isOn: Binding(get: { PetController.shared.isTrackingEnabled }, set: { PetController.shared.setTrackingEnabled($0) }))
+                    HStack {
+                        Button("日常记录") { PetCompanion.shared.showNotes() }
+                        Button("事项提醒") { PetCompanion.shared.showReminders() }
+                        Button("新建对话") { PetChatStore.shared.newChat() }
+                    }
+                    Menu("选择宠物形象") {
+                        ForEach(PetSkin.allCases) { skin in
+                            Button(skin.rawValue) { PetAppearance.shared.select(skin) }
+                        }
+                    }
+                    Button("导入自定义 GIF…") { PetAppearance.shared.importGIF() }
+                    if let issue = PetAppearance.shared.issue { Text(issue).font(.caption).foregroundColor(.orange) }
+                    Text("悬浮播放，移开静止；单击回主窗口，右键打开快捷菜单。记录保存在本机，通知权限关闭时仅应用运行期间弹卡。")
+                        .font(.caption).foregroundColor(.secondary)
                 }
                 settingGroup("外观与启动") {
                     Picker("外观", selection: $theme) { Text("明亮").tag("light"); Text("暗黑").tag("dark") }.pickerStyle(.segmented).frame(width: 220)
