@@ -49,14 +49,29 @@ final class PetStorage: ObservableObject {
         directory.appendingPathComponent(skin.fileStem + ".gif")
     }
 
-    /// 内置形象落盘为 GIF，缺失时补回；用户删除自定义形象不受影响。
+    /// 标记当前落盘的内置形象绘制版本，升级后覆盖旧 GIF。
+    private var artVersionURL: URL { directory.appendingPathComponent(".art-version") }
+
+    /// 内置形象落盘为 GIF：缺失时补回；绘制版本升级时整体覆盖。
+    /// 用户删除自定义形象不受影响。
     func seedBuiltins() {
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let version = String(PetSkin.artVersion)
+        let installed = (try? String(contentsOf: artVersionURL, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let upgrade = installed != version
+        var wrote = false
         for skin in PetSkin.allCases {
             let target = fileURL(for: skin)
-            guard !fileManager.fileExists(atPath: target.path), let data = skin.gif() else { continue }
-            do { try data.write(to: target, options: .atomic) }
-            catch { issue = "内置形象写入失败：\(error.localizedDescription)" }
+            let exists = fileManager.fileExists(atPath: target.path)
+            guard upgrade || !exists, let data = skin.gif() else { continue }
+            do {
+                try data.write(to: target, options: .atomic)
+                wrote = true
+            } catch { issue = "内置形象写入失败：\(error.localizedDescription)" }
+        }
+        if upgrade, wrote {
+            try? version.write(to: artVersionURL, atomically: true, encoding: .utf8)
         }
     }
 

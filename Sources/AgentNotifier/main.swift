@@ -5163,18 +5163,23 @@ struct PetView: View {
     var body: some View {
         VStack(spacing: 0) {
             PetAnimatedImage(appearance: .shared, hovered: model.hovered)
-                .frame(width: 180, height: 180)
+                .frame(width: 120, height: 120)
                 .overlay(alignment: .topTrailing) {
                     if model.pose != .swim || model.activeRunningCount > 0 {
                         Image(systemName: model.pose == .celebrate ? "checkmark.circle.fill" : model.pose == .alert ? "bell.badge.fill" : model.pose == .sad ? "exclamationmark.triangle.fill" : "ellipsis.bubble.fill")
-                            .font(.title2).foregroundColor(model.pose == .celebrate ? .green : .blue)
-                            .padding(6).background(.thinMaterial, in: Circle())
+                            .font(.caption).foregroundColor(model.pose == .celebrate ? .green : .blue)
+                            .padding(4).background(.thinMaterial, in: Circle())
                     }
                 }
             if let text = model.bubble {
-                Text(text).font(.caption).padding(5).background(.thinMaterial, in: Capsule())
+                Text(text).font(.caption2)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.thinMaterial, in: Capsule())
+                    .frame(maxWidth: 148)
             }
-        }.frame(width: 220, height: 215, alignment: .bottom)
+        }.frame(width: 160, height: 180, alignment: .bottom)
             .allowsHitTesting(false)
     }
 
@@ -5295,7 +5300,7 @@ final class PetController {
 
     /// 重置回主屏幕右下角默认位置
     func resetToBottomRight() {
-        let size = panel?.frame.size ?? NSSize(width: 220, height: 215)
+        let size = panel?.frame.size ?? NSSize(width: 160, height: 180)
         let origin = defaultBottomRightOrigin(panelSize: size)
         panel?.setFrameOrigin(origin)
         commitDragPosition(origin)
@@ -5317,7 +5322,7 @@ final class PetController {
 
     private func showPet() {
         if panel == nil {
-            let size = NSSize(width: 220, height: 215)
+            let size = NSSize(width: 160, height: 180)
             let origin = restoredOrigin(panelSize: size)
             let p = PetPanel(contentRect: NSRect(origin: origin, size: size))
             p.hostView.onHover = { [weak self] in self?.model.hovered = $0 }

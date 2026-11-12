@@ -1,5 +1,6 @@
 import XCTest
 import ImageIO
+import SwiftUI
 @testable import AgentNotifier
 
 @MainActor
@@ -54,9 +55,24 @@ final class PetCompanionTests: XCTestCase {
         for skin in PetSkin.allCases {
             let data = try XCTUnwrap(skin.gif())
             let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
-            XCTAssertEqual(CGImageSourceGetCount(source), 8)
+            XCTAssertEqual(CGImageSourceGetCount(source), PetSkin.frameCount)
             XCTAssertNotNil(CGImageSourceCreateImageAtIndex(source, 0, nil))
         }
+    }
+
+    func testBuiltinArtUpgradeReplacesStaleGIFs() throws {
+        let directory = root.appendingPathComponent("upgrade-pets")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let target = directory.appendingPathComponent(PetSkin.xiaobai.fileStem + ".gif")
+        try Data("stale".utf8).write(to: target)
+        try Data("1".utf8).write(to: directory.appendingPathComponent(".art-version"))
+        let storage = PetStorage(directory: directory)
+        let upgraded = try Data(contentsOf: target)
+        XCTAssertNotEqual(upgraded, Data("stale".utf8))
+        XCTAssertNotNil(PetGIFCodec.inspect(upgraded))
+        storage.seedBuiltins()
+        XCTAssertEqual(try Data(contentsOf: target), upgraded)
+        XCTAssertFalse(storage.assets.contains { $0.fileName.contains("art-version") })
     }
     func testChatEventFilterNeverExposesReasoningOrCommandArguments() {
         XCTAssertEqual(PetChatEvent.parse(["type":"item.completed", "item":["type":"reasoning", "text":"PRIVATE_REASONING"]]), .ignored)
@@ -167,8 +183,31 @@ final class PetCompanionTests: XCTestCase {
         XCTAssertEqual(output.frameCount, info.frameCount)
     }
 
-    func testCropWindowPresentsWithSaveAndCancelActions() throws {
-        let suite = "hakimi-pet-crop-window-" + UUID().uuidString
+    func testPetImageViewKeepsDesignSizeInsteadOfGIFPixelSize() throws {
+        let view = PetGIFImageView()
+        XCTAssertEqual(view.intrinsicContentSize, NSSize(width: 120, height: 120))
+        let suite = "hakimi-pet-layout-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let appearance = PetAppearance(defaults: defaults,
+                                       storage: PetStorage(directory: root.appendingPathComponent("layout-pets")))
+        let hosting = NSHostingView(rootView: PetAnimatedImage(appearance: appearance, hovered: false)
+            .frame(width: 120, height: 120))
+        hosting.frame = NSRect(x: 0, y: 0, width: 160, height: 180)
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        hosting.layoutSubtreeIfNeeded()
+        func findImageView(_ view: NSView) -> PetGIFImageView? {
+            if let image = view as? PetGIFImageView { return image }
+            for subview in view.subviews { if let found = findImageView(subview) { return found } }
+            return nil
+        }
+        let imageView = try XCTUnwrap(findImageView(hosting))
+        XCTAssertEqual(imageView.frame.width, 120, accuracy: 0.5)
+        XCTAssertEqual(imageView.frame.height, 120, accuracy: 0.5)
+    }
+
+    func testCropWindowPresentsWithSaveAndCancelActions() throws {        let suite = "hakimi-pet-crop-window-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let appearance = PetAppearance(defaults: defaults,
@@ -207,16 +246,25 @@ final class PetCompanionTests: XCTestCase {
         XCTAssertNotEqual(first.dataProvider?.data as Data?, blink.dataProvider?.data as Data?)
         XCTAssertNotNil(appearance.staticImage.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let animated = try XCTUnwrap(appearance.image?.representations.first as? NSBitmapImageRep)
-        XCTAssertEqual((animated.value(forProperty: .frameCount) as? NSNumber)?.intValue, 8)
+        XCTAssertEqual((animated.value(forProperty: .frameCount) as? NSNumber)?.intValue, PetSkin.frameCount)
     }
 
-    func testHoverPlayerAdvancesPixelsAndRestoresStillImageOnExit() throws {
+    func testIdleLoopKeepsAnimatingAndHoverSpeedsUp() throws {
         let suite = "hakimi-pet-player-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let appearance = PetAppearance(defaults: defaults,
                                        storage: PetStorage(directory: root.appendingPathComponent("player-pets")))
         let view = PetGIFImageView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 180),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        view.configure(appearance: appearance, hovered: false)
+        // 静止状态也保持缓慢的空闲动作，不再是一张冻结的图。
+        XCTAssertTrue(view.timerIsActive)
+        XCTAssertFalse(view.hovering)
+        XCTAssertEqual(view.frameCount, PetSkin.frameCount)
         view.configure(appearance: appearance, hovered: true)
         // 悬浮后立即推进一帧，响应不等待首个定时器。
         XCTAssertEqual(view.displayedFrame, 1)
@@ -225,11 +273,10 @@ final class PetCompanionTests: XCTestCase {
         XCTAssertEqual(view.displayedFrame, (1 + 4) % view.frameCount)
         XCTAssertNotEqual(view.image?.tiffRepresentation, first)
         view.configure(appearance: appearance, hovered: false)
-        XCTAssertEqual(view.displayedFrame, 0)
-        XCTAssertFalse(view.timerIsActive)
-        let stopped = view.image?.tiffRepresentation
-        view.advanceFrame()
-        XCTAssertEqual(view.image?.tiffRepresentation, stopped)
+        XCTAssertTrue(view.timerIsActive)
+        XCTAssertTrue(view.image != nil)
+        window.contentView = NSView()
+        window.close()
     }
 
 }
