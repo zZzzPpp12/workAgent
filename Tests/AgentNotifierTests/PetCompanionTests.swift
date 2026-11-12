@@ -207,6 +207,33 @@ final class PetCompanionTests: XCTestCase {
         XCTAssertEqual(imageView.frame.height, 120, accuracy: 0.5)
     }
 
+    func testProgressPopupPolicyShowsForNewRunningTaskAndHonorsDismissal() {
+        let model = PetProgressModel()
+        func task(_ id: String, _ phase: TaskPhase) -> PetTaskProgress {
+            PetTaskProgress(id: id, title: "任务 " + id, source: "测试", phase: phase, steps: [], activity: now)
+        }
+        model.update([task("a", .running)])
+        XCTAssertFalse(model.dismissed)
+        model.dismiss()
+        XCTAssertTrue(model.dismissed)
+        // 同一任务继续推进时不重新弹出
+        model.update([task("a", .running)])
+        XCTAssertTrue(model.dismissed)
+        model.update([task("a", .completed)])
+        XCTAssertTrue(model.dismissed)
+        // 有新任务开始执行 → 默认重新弹出
+        model.update([task("a", .completed), task("b", .running)])
+        XCTAssertFalse(model.dismissed)
+        model.dismiss()
+        XCTAssertTrue(model.dismissed)
+        // 菜单主动打开可强制恢复
+        model.forceShow()
+        XCTAssertFalse(model.dismissed)
+        // 任务清空后重置，后续新任务照常弹出
+        model.update([])
+        XCTAssertFalse(model.dismissed)
+    }
+
     func testCropWindowPresentsWithSaveAndCancelActions() throws {        let suite = "hakimi-pet-crop-window-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }

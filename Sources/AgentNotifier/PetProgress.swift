@@ -23,23 +23,50 @@ struct PetTaskProgress: Identifiable, Equatable {
 final class PetProgressModel: ObservableObject {
     @Published var tasks: [PetTaskProgress] = []
     @Published var selectedID: String?
+    /// 用户手动关闭后不再自动弹出，直到出现新的执行中任务。
+    private(set) var dismissed = false
+    private var knownActive: Set<String> = []
+
     var selected: PetTaskProgress? { tasks.first { $0.id == selectedID } ?? tasks.first }
+
     func update(_ incoming: [PetTaskProgress]) {
+        let active = Set(incoming.filter { PetProgressModel.isActive($0.phase) }.map(\.id))
+        if !active.subtracting(knownActive).isEmpty { dismissed = false }
+        knownActive = active
+        if incoming.isEmpty { dismissed = false }
         if tasks != incoming { tasks = incoming }
         if !incoming.contains(where: { $0.id == selectedID }) { selectedID = incoming.first?.id }
+    }
+
+    /// 用户点击关闭：同一批任务继续推进时保持收起。
+    func dismiss() { dismissed = true }
+    /// 用户从菜单主动打开：强制恢复自动弹出。
+    func forceShow() { dismissed = false }
+
+    private static func isActive(_ phase: TaskPhase) -> Bool {
+        [.running, .approval, .input, .suspected].contains(phase)
     }
 }
 
 struct PetProgressBubble: View {
     @ObservedObject var model: PetProgressModel
     var openTask: (String) -> Void
+    var onClose: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let task = model.selected {
-                HStack {
+                HStack(spacing: 6) {
                     Text(task.source).font(.caption).foregroundColor(.secondary)
                     Spacer()
                     Label(task.phase.label, systemImage: task.phase.symbol).font(.caption).foregroundColor(task.phase.color)
+                    Button(action: onClose) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("关闭任务栏并停止自动弹出")
+                    .accessibilityLabel("关闭任务栏")
                 }
                 Text(task.title).font(.headline).lineLimit(2)
                 ScrollViewReader { proxy in

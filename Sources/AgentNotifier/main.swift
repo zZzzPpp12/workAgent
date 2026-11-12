@@ -5200,6 +5200,8 @@ final class PetController {
     var isTrackingEnabled: Bool { defaults.object(forKey: "pet.tracking") as? Bool ?? true }
     func setTrackingEnabled(_ enabled: Bool) {
         defaults.set(enabled, forKey: "pet.tracking")
+        // 关闭浮窗与菜单勾选保持一致：关闭即停止跟踪，重新打开即恢复自动弹出。
+        if enabled { progress.forceShow() } else { progress.dismiss() }
         refreshProgressPanel()
     }
     func updateTasks(_ tasks: [TaskRecord], now: Date = Date()) {
@@ -5214,10 +5216,13 @@ final class PetController {
         refreshProgressPanel()
     }
     func showProgress() {
-        refreshProgressPanel()
+        // 主动查看时同步打开跟踪，右侧菜单的勾选状态保持一致。
+        setTrackingEnabled(true)
         progressPanel?.makeKeyAndOrderFront(nil)
     }
     private func refreshProgressPanel() {
+        // 用户点过关闭后保持收起；出现新的执行中任务时由 PetProgressModel 重新解锁。
+        guard !progress.dismissed else { progressPanel?.orderOut(nil); return }
         guard isEnabled, isTrackingEnabled, !PetCompanion.shared.isPresentingReminder, !progress.tasks.isEmpty, let pet = panel else { progressPanel?.orderOut(nil); return }
         if progressPanel == nil {
             let bubble = PetProgressPanel(contentRect: NSRect(x: 0, y: 0, width: 318, height: 250),
@@ -5226,7 +5231,10 @@ final class PetController {
             bubble.isOpaque = false; bubble.backgroundColor = .clear; bubble.level = .statusBar
             bubble.hidesOnDeactivate = false; bubble.isReleasedWhenClosed = false
             bubble.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            bubble.contentView = NSHostingView(rootView: PetProgressBubble(model: progress, openTask: { [weak self] in self?.openTask?($0) }))
+            bubble.contentView = NSHostingView(rootView: PetProgressBubble(
+                model: progress,
+                openTask: { [weak self] in self?.openTask?($0) },
+                onClose: { [weak self] in self?.setTrackingEnabled(false) }))
             progressPanel = bubble
         }
         guard let bubble = progressPanel else { return }
