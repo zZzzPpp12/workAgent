@@ -22,11 +22,12 @@ struct BrandMascotView: View {
 
 struct TaskCenterView: View {
     @ObservedObject var chats = PetChatStore.shared
+    @ObservedObject private var appearance = PetAppearance.shared
     @ObservedObject var monitor: Monitor
     @ObservedObject var center: TaskCenterStore
     @ObservedObject var updater: UpdateChecker
     @ObservedObject var preferences = MonitorPreferences.shared
-    @State private var page = "overview"
+    @AppStorage("r1.page") private var page = "overview"
     @AppStorage("r1.search") private var search = ""
     @AppStorage("r1.sourceFilter") private var sourceFilter = "全部来源"
     @AppStorage("r1.projectFilter") private var projectFilter = "全部项目"
@@ -48,6 +49,7 @@ struct TaskCenterView: View {
 
     private let pages: [(String, String, String)] = [
         ("conversations", "对话与执行", "bubble.left.and.text.bubble.right"),
+        ("pets", "桌面宠物", "pawprint.fill"),
         ("overview", "任务总览", "square.grid.2x2"),
         ("tasks", "全部任务", "list.bullet.rectangle"),
         ("workflows", "执行工作流", "point.topleft.down.curvedto.point.bottomright.up"),
@@ -68,6 +70,7 @@ struct TaskCenterView: View {
                 if let issue = center.storageIssue { notice(issue, icon: "externaldrive.badge.exclamationmark") }
                 if let clipboardFeedback { ClipboardFeedbackView(feedback: clipboardFeedback) }
                 if page == "conversations" { PetChatPage(store: chats) }
+                else if page == "pets" { PetManagementPage() }
                 else if page == "settings" { settingsPage }
                 else if page == "history" { HistoryPage(history: monitor.history, center: center) }
                 else if page == "sources" { sourcesPage }
@@ -115,7 +118,14 @@ struct TaskCenterView: View {
             ForEach(pages, id: \.0) { entry in
                 Button { page = entry.0 } label: {
                     HStack(spacing: 9) {
-                        Image(systemName: entry.2).frame(width: 17)
+                        Group {
+                            if entry.0 == "pets" {
+                                Image(nsImage: appearance.sidebarIcon)
+                                    .resizable().interpolation(.high).scaledToFit()
+                            } else {
+                                Image(systemName: entry.2)
+                            }
+                        }.frame(width: 17, height: 17)
                         Text(entry.1)
                         Spacer(minLength: 0)
                         if entry.0 == "overview", center.actionableCount > 0 {
@@ -165,6 +175,7 @@ struct TaskCenterView: View {
     private var subtitle: String {
         switch page {
         case "conversations": return "在主窗口发起任务，桌宠随时展示进展。"
+        case "pets": return "内置 5 只形象开箱即用，也可以导入自己的 GIF 并框选展示区域。"
         case "workflows": return "跟随真实日志，查看模型处理、工具调用与等待交互的执行过程。"
         case "history": return "查看跨回合记录和工作统计，旧日志可按需回填。"
         case "sources": return "接入能力如实展示，来源异常不会被当成任务失败。"
@@ -483,9 +494,12 @@ struct TaskCenterView: View {
                             Button(skin.rawValue) { PetAppearance.shared.select(skin) }
                         }
                     }
-                    Button("导入自定义 GIF…") { PetAppearance.shared.importGIF() }
+                    HStack {
+                        Button("宠物管理…") { page = "pets" }
+                        Button("导入自定义 GIF…") { PetAppearance.shared.importGIF() }
+                    }
                     if let issue = PetAppearance.shared.issue { Text(issue).font(.caption).foregroundColor(.orange) }
-                    Text("悬浮播放，移开静止；单击回主窗口，右键打开快捷菜单。记录保存在本机，通知权限关闭时仅应用运行期间弹卡。")
+                    Text("形象与自定义 GIF 统一保存在 ~/Downloads/AgentPets；悬浮播放，移开静止；单击回主窗口，右键打开快捷菜单。记录保存在本机，通知权限关闭时仅应用运行期间弹卡。")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 settingGroup("外观与启动") {

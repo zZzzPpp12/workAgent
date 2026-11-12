@@ -97,28 +97,88 @@ final class PetCompanionTests: XCTestCase {
         XCTAssertEqual(PetChatStore(url: chatURL, executable: fixture).chats.first?.phase, .unknown)
     }
 
-    func testCustomGIFIsCopiedAndRestoredAndInvalidReplacementPreservesIt() throws {
+    func testCustomGIFIsCopiedIntoPetFolderAndRestoredAndInvalidReplacementPreservesIt() throws {
         let suite = "hakimi-pet-appearance-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = root.appendingPathComponent("AgentPets")
+        let storage = PetStorage(directory: directory)
+        let appearance = PetAppearance(defaults: defaults, storage: storage)
         let imported = root.appendingPathComponent("import.gif")
-        let saved = root.appendingPathComponent("saved/custom.gif")
-        let data = try XCTUnwrap(PetSkin.rabbit.gif())
+        let data = try XCTUnwrap(PetSkin.xiaohong.gif())
         try data.write(to: imported)
-        let appearance = PetAppearance(defaults: defaults, customURL: saved)
-        XCTAssertTrue(appearance.loadGIF(imported))
+        XCTAssertTrue(appearance.loadGIF(imported), appearance.issue ?? "no issue")
         try FileManager.default.removeItem(at: imported)
-        let restored = PetAppearance(defaults: defaults, customURL: saved)
+        let custom = try XCTUnwrap(appearance.selectedAsset)
+        XCTAssertTrue(custom.isCustom)
+        XCTAssertEqual(custom.url.resolvingSymlinksInPath().deletingLastPathComponent().path,
+                       directory.resolvingSymlinksInPath().path)
+        let restored = PetAppearance(defaults: defaults, storage: PetStorage(directory: directory))
         XCTAssertTrue(restored.custom)
         XCTAssertNotNil(restored.image)
         XCTAssertNotNil(restored.staticImage.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let invalid = root.appendingPathComponent("invalid.gif")
         try Data("invalid".utf8).write(to: invalid)
         XCTAssertFalse(restored.loadGIF(invalid))
-        XCTAssertEqual(try Data(contentsOf: saved), data)
-        restored.select(.fox)
+        XCTAssertEqual(try Data(contentsOf: custom.url), data)
+        restored.select(.xiaohong)
         XCTAssertFalse(restored.custom)
-        XCTAssertEqual(PetAppearance(defaults: defaults, customURL: saved).skin, .fox)
+        XCTAssertEqual(PetAppearance(defaults: defaults, storage: storage).skin, .xiaohong)
+    }
+
+    func testStorageSeedsFiveBuiltinsAndDetectsGIFsDroppedIntoFolder() throws {
+        let directory = root.appendingPathComponent("dropped-pets")
+        let storage = PetStorage(directory: directory)
+        let builtins = storage.assets.filter { $0.builtin != nil }
+        XCTAssertEqual(builtins.count, 5)
+        XCTAssertEqual(Set(builtins.compactMap(\.builtin)), Set(PetSkin.allCases))
+        for asset in builtins { XCTAssertTrue(FileManager.default.fileExists(atPath: asset.url.path)) }
+        let dropped = directory.appendingPathComponent("我的宠物.gif")
+        try XCTUnwrap(PetSkin.zombie.gif()).write(to: dropped)
+        storage.rescan()
+        XCTAssertTrue(storage.assets.contains { $0.fileName == "我的宠物.gif" })
+    }
+
+    func testDeletingCustomAssetRemovesFileAndFallsBackToBuiltin() throws {
+        let suite = "hakimi-pet-delete-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let storage = PetStorage(directory: root.appendingPathComponent("delete-pets"))
+        let appearance = PetAppearance(defaults: defaults, storage: storage)
+        let imported = root.appendingPathComponent("temporary.gif")
+        try XCTUnwrap(PetSkin.spiderman.gif()).write(to: imported)
+        XCTAssertTrue(appearance.loadGIF(imported), appearance.issue ?? "no issue")
+        let asset = try XCTUnwrap(appearance.selectedAsset)
+        let url = asset.url
+        XCTAssertTrue(appearance.delete(asset))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertFalse(appearance.custom)
+        XCTAssertEqual(appearance.skin, .xiaobai)
+    }
+
+    func testGIFCropProducesExpectedPixelSizeAndKeepsFrames() throws {
+        let data = try XCTUnwrap(PetSkin.xiaobai.gif())
+        let info = try XCTUnwrap(PetGIFCodec.inspect(data))
+        let cropped = try XCTUnwrap(PetGIFCodec.crop(
+            data, normalized: CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)))
+        let output = try XCTUnwrap(PetGIFCodec.inspect(cropped))
+        XCTAssertEqual(output.pixelWidth, Int(Double(info.pixelWidth) * 0.5))
+        XCTAssertEqual(output.pixelHeight, Int(Double(info.pixelHeight) * 0.5))
+        XCTAssertEqual(output.frameCount, info.frameCount)
+    }
+
+    func testCropWindowPresentsWithSaveAndCancelActions() throws {
+        let suite = "hakimi-pet-crop-window-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let appearance = PetAppearance(defaults: defaults,
+                                       storage: PetStorage(directory: root.appendingPathComponent("crop-pets")))
+        let data = try XCTUnwrap(PetSkin.xiaohong.gif())
+        PetCropWindow.present(data: data, name: "裁剪窗口测试", appearance: appearance)
+        let window = try XCTUnwrap(NSApp.windows.first { $0.title == "框选要展示的区域" })
+        XCTAssertNotNil(window.contentView)
+        window.close()
+        XCTAssertNil(NSApp.windows.first { $0.title == "框选要展示的区域" && $0.isVisible })
     }
 
     func testCompletionBindingIsIdempotentAndReopeningRearmsReminder() throws {
@@ -138,8 +198,9 @@ final class PetCompanionTests: XCTestCase {
         let suite = "hakimi-pet-frames-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let appearance = PetAppearance(defaults: defaults, customURL: root.appendingPathComponent("unused.gif"))
-        let gif = try XCTUnwrap(PetSkin.cat.gif())
+        let appearance = PetAppearance(defaults: defaults,
+                                       storage: PetStorage(directory: root.appendingPathComponent("frames-pets")))
+        let gif = try XCTUnwrap(PetSkin.xiaobai.gif())
         let source = try XCTUnwrap(CGImageSourceCreateWithData(gif as CFData, nil))
         let first = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
         let blink = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 4, nil))
@@ -153,12 +214,15 @@ final class PetCompanionTests: XCTestCase {
         let suite = "hakimi-pet-player-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let appearance = PetAppearance(defaults: defaults, customURL: root.appendingPathComponent("none.gif"))
+        let appearance = PetAppearance(defaults: defaults,
+                                       storage: PetStorage(directory: root.appendingPathComponent("player-pets")))
         let view = PetGIFImageView()
         view.configure(appearance: appearance, hovered: true)
+        // 悬浮后立即推进一帧，响应不等待首个定时器。
+        XCTAssertEqual(view.displayedFrame, 1)
         let first = view.image?.tiffRepresentation
         for _ in 0..<4 { view.advanceFrame() }
-        XCTAssertEqual(view.displayedFrame, 4)
+        XCTAssertEqual(view.displayedFrame, (1 + 4) % view.frameCount)
         XCTAssertNotEqual(view.image?.tiffRepresentation, first)
         view.configure(appearance: appearance, hovered: false)
         XCTAssertEqual(view.displayedFrame, 0)

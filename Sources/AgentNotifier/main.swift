@@ -5101,10 +5101,14 @@ final class PetPanel: NSPanel {
         for skin in PetSkin.allCases {
             let item = NSMenuItem(title: skin.rawValue, action: #selector(petSelectSkin(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = skin.rawValue
-            item.state = !PetAppearance.shared.custom && PetAppearance.shared.skin == skin ? .on : .off
+            item.state = PetAppearance.shared.selectedAsset?.builtin == skin ? .on : .off
             skins.addItem(item)
         }
         skins.addItem(.separator())
+        let manage = NSMenuItem(title: "宠物管理…", action: #selector(petManage), keyEquivalent: "")
+        manage.target = self; skins.addItem(manage)
+        let openFolder = NSMenuItem(title: "打开宠物文件夹", action: #selector(petOpenFolder), keyEquivalent: "")
+        openFolder.target = self; skins.addItem(openFolder)
         let custom = NSMenuItem(title: "导入自定义 GIF…", action: #selector(petCustomGIF), keyEquivalent: "")
         custom.target = self; skins.addItem(custom)
         let appearance = NSMenuItem(title: "宠物形象", action: nil, keyEquivalent: "")
@@ -5134,6 +5138,11 @@ final class PetPanel: NSPanel {
             let alert = NSAlert(); alert.messageText = issue; alert.runModal()
         }
     }
+    @objc private func petManage() {
+        UserDefaults.standard.set("pets", forKey: "r1.page")
+        PetController.shared.openMainWindow?()
+    }
+    @objc private func petOpenFolder() { PetAppearance.shared.openFolder() }
     @objc private func petNewChat() { PetChatPresenter.shared.show(near: frame) }
     @objc private func petNotes() { PetCompanion.shared.showNotes() }
     @objc private func petReminders() { PetCompanion.shared.showReminders() }
@@ -5712,6 +5721,7 @@ completionHandler()
 }
 
     private func showWindow() {
+        if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
