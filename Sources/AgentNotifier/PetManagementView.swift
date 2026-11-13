@@ -52,7 +52,7 @@ struct PetManagementPage: View {
                     .textSelection(.enabled)
             }
             .font(.system(size: 12))
-            Text("悬浮播放动画，移开静止；单击桌宠回到主窗口，右键可新建对话、记录、提醒或收回宠物。")
+            Text("静止时保持低速呼吸动作，悬浮后加速播放；单击桌宠回到主窗口，右键可打开记录、提醒、进度开关或收回宠物。")
                 .font(.caption).foregroundColor(.secondary)
         }
         .onAppear { appearance.refresh() }

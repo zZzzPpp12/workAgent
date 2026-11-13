@@ -20,13 +20,114 @@ struct BrandMascotView: View {
     }
 }
 
+struct TaskCenterSidebarDrawer: View {
+    @Binding var page: String
+    let activePage: String
+    let expanded: Bool
+    let actionableCount: Int
+    let quiet: Bool
+    let petIcon: NSImage
+    var onHoverChange: ((Bool) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(spacing: expanded ? 8 : 0) {
+                BrandMascotView(size: expanded ? 48 : 34)
+                if expanded {
+                    VStack(spacing: 3) {
+                        Text("Agent哈基米").font(.system(size: 14, weight: .bold)).lineLimit(1)
+                        Text("任务监测中心").font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 86, alignment: .center)
+            .padding(.bottom, 12)
+
+            ForEach(TaskCenterView.pages, id: \.0) { entry in
+                let selected = activePage == entry.0
+                Button { page = entry.0 } label: {
+                    HStack(spacing: expanded ? 9 : 0) {
+                        ZStack(alignment: .topTrailing) {
+                            Group {
+                                if entry.0 == "pets" {
+                                    Image(nsImage: petIcon)
+                                        .resizable().interpolation(.high).scaledToFit()
+                                } else {
+                                    Image(systemName: entry.2)
+                                }
+                            }
+                            .frame(width: 17, height: 17)
+                            if !expanded, entry.0 == "overview", actionableCount > 0 {
+                                Circle()
+                                    .fill(Color.orange)
+                                    .frame(width: 6, height: 6)
+                                    .offset(x: 4, y: -3)
+                            }
+                        }
+                        if expanded {
+                            Text(entry.1).lineLimit(1)
+                            Spacer(minLength: 0)
+                            if entry.0 == "overview", actionableCount > 0 {
+                                Text("\(actionableCount)")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
+                    .frame(height: 36)
+                    .padding(.horizontal, expanded ? 10 : 0)
+                    .foregroundColor(selected ? .blue : .primary)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.blue.opacity(0.12) : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(entry.1)
+                .accessibilityLabel(entry.1)
+            }
+            Spacer()
+            if expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    if quiet {
+                        Label("提醒已静音", systemImage: "bell.slash").font(.caption).foregroundColor(.orange).lineLimit(1)
+                    } else {
+                        Label("正在本机监测", systemImage: "circle.fill").font(.caption).foregroundColor(.secondary).lineLimit(1)
+                    }
+                    Text("v\(Config.appVersion) · 工作流").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary).lineLimit(1)
+                    Text("状态与处理记录保存在本机").font(.system(size: 9)).foregroundColor(.secondary).lineLimit(1)
+                }
+                .transition(.opacity)
+            } else {
+                Image(systemName: quiet ? "bell.slash" : "circle.fill")
+                    .font(.system(size: quiet ? 12 : 8))
+                    .foregroundColor(quiet ? .orange : .green.opacity(0.85))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .help(quiet ? "提醒已静音" : "正在本机监测 · v\(Config.appVersion)")
+            }
+        }
+        .padding(.horizontal, expanded ? 12 : 18)
+        .padding(.top, 46)
+        .padding(.bottom, 20)
+        .frame(width: expanded ? TaskCenterView.sidebarExpandedWidth : TaskCenterView.sidebarCollapsedWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .clipped()
+        .contentShape(Rectangle())
+        .onHover { hovering in onHoverChange?(hovering) }
+    }
+}
+
 struct TaskCenterView: View {
-    @ObservedObject var chats = PetChatStore.shared
     @ObservedObject private var appearance = PetAppearance.shared
     @ObservedObject var monitor: Monitor
     @ObservedObject var center: TaskCenterStore
     @ObservedObject var updater: UpdateChecker
     @ObservedObject var preferences = MonitorPreferences.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("r1.page") private var page = "overview"
     @AppStorage("r1.search") private var search = ""
     @AppStorage("r1.sourceFilter") private var sourceFilter = "全部来源"
@@ -35,6 +136,7 @@ struct TaskCenterView: View {
     @AppStorage("ui.theme") private var theme = "dark"
     @AppStorage("r1.onboardingComplete") private var onboarded = false
     @State private var showOnboarding = false
+    @State private var sidebarHovered = false
     @State private var detailID: String?
     @State private var detailAttentionID: String?
     @State private var clipboardFeedback: ClipboardFeedback?
@@ -47,8 +149,10 @@ struct TaskCenterView: View {
         self.updater = updater
     }
 
-    private let pages: [(String, String, String)] = [
-        ("conversations", "对话与执行", "bubble.left.and.text.bubble.right"),
+    static let sidebarCollapsedWidth: CGFloat = 76
+    static let sidebarExpandedWidth: CGFloat = 158
+
+    static let pages: [(String, String, String)] = [
         ("pets", "桌面宠物", "pawprint.fill"),
         ("overview", "任务总览", "square.grid.2x2"),
         ("tasks", "全部任务", "list.bullet.rectangle"),
@@ -60,6 +164,12 @@ struct TaskCenterView: View {
         ("settings", "设置", "slider.horizontal.3")
     ]
 
+    static func normalizedPage(_ value: String) -> String {
+        pages.contains { $0.0 == value } ? value : "overview"
+    }
+
+    private var activePage: String { Self.normalizedPage(page) }
+
     var body: some View {
         HStack(spacing: 0) {
             sidebar
@@ -69,16 +179,15 @@ struct TaskCenterView: View {
                 if let message = center.navigationMessage { notice(message, icon: "arrow.up.forward.app", color: .blue) }
                 if let issue = center.storageIssue { notice(issue, icon: "externaldrive.badge.exclamationmark") }
                 if let clipboardFeedback { ClipboardFeedbackView(feedback: clipboardFeedback) }
-                if page == "conversations" { PetChatPage(store: chats) }
-                else if page == "pets" { PetManagementPage() }
-                else if page == "settings" { settingsPage }
-                else if page == "history" { HistoryPage(history: monitor.history, center: center) }
-                else if page == "sources" { sourcesPage }
-                else if page == "diagnostics" { diagnosticsPage }
+                if activePage == "pets" { PetManagementPage() }
+                else if activePage == "settings" { settingsPage }
+                else if activePage == "history" { HistoryPage(history: monitor.history, center: center) }
+                else if activePage == "sources" { sourcesPage }
+                else if activePage == "diagnostics" { diagnosticsPage }
                 else {
-                    if page == "overview" { quotas }
+                    if activePage == "overview" { quotas }
                     filters
-                    if page == "workflows" { workflowContent } else { taskContent }
+                    if activePage == "workflows" { workflowContent } else { taskContent }
                     HStack {
                         Text("来源：\(center.sources.filter(\.healthy).count) 正常 / \(center.sources.filter { !$0.healthy }.count) 受限或未配置").font(.system(size: 10)).foregroundColor(.secondary)
                         Spacer()
@@ -98,8 +207,12 @@ struct TaskCenterView: View {
             if let id = detailID { TaskDetailView(center: center, history: monitor.history, taskID: id, attentionID: detailAttentionID) }
         }
         .sheet(isPresented: $showOnboarding) { onboarding }
-        .onAppear { center.inspectPermission(); showOnboarding = !onboarded }
-        .onChange(of: chats.openRequest) { _ in page = "conversations" }
+        .onAppear {
+            let normalized = Self.normalizedPage(page)
+            if page != normalized { page = normalized }
+            center.inspectPermission()
+            showOnboarding = !onboarded
+        }
         .onChange(of: preferences.value) { _ in monitor.scanAndPoll() }
         .onChange(of: center.requestedTaskID) { id in
             if let id { page = "overview"; detailAttentionID = center.requestedAttentionID; detailID = id; center.selectedTaskID = id; center.requestedTaskID = nil; center.requestedAttentionID = nil }
@@ -107,60 +220,32 @@ struct TaskCenterView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            VStack(spacing: 8) {
-                BrandMascotView(size: 56)
-                VStack(spacing: 3) {
-                    Text("Agent哈基米").font(.system(size: 14, weight: .bold))
-                    Text("任务监测中心").font(.system(size: 10)).foregroundColor(.secondary)
-                }
-            }.frame(maxWidth: .infinity).padding(.bottom, 24)
-            ForEach(pages, id: \.0) { entry in
-                Button { page = entry.0 } label: {
-                    HStack(spacing: 9) {
-                        Group {
-                            if entry.0 == "pets" {
-                                Image(nsImage: appearance.sidebarIcon)
-                                    .resizable().interpolation(.high).scaledToFit()
-                            } else {
-                                Image(systemName: entry.2)
-                            }
-                        }.frame(width: 17, height: 17)
-                        Text(entry.1)
-                        Spacer(minLength: 0)
-                        if entry.0 == "overview", center.actionableCount > 0 {
-                            Text("\(center.actionableCount)").font(.caption.bold()).foregroundColor(.orange)
-                        }
-                    }
-                    .font(.system(size: 12, weight: page == entry.0 ? .semibold : .regular))
-                    .padding(.horizontal, 10).padding(.vertical, 10)
-                    .foregroundColor(page == entry.0 ? .blue : .primary)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(page == entry.0 ? Color.blue.opacity(0.12) : .clear))
-                    .contentShape(Rectangle())
-                }.buttonStyle(.plain)
-            }
-            Spacer()
-            if preferences.value.isQuiet(at: Date()) {
-                Label("提醒已静音", systemImage: "bell.slash").font(.caption).foregroundColor(.orange)
+        TaskCenterSidebarDrawer(
+            page: $page,
+            activePage: activePage,
+            expanded: sidebarHovered,
+            actionableCount: center.actionableCount,
+            quiet: preferences.value.isQuiet(at: Date()),
+            petIcon: appearance.sidebarIcon
+        ) { hovering in
+            if reduceMotion {
+                sidebarHovered = hovering
             } else {
-                Label("正在本机监测", systemImage: "circle.fill").font(.caption).foregroundColor(.secondary)
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    sidebarHovered = hovering
+                }
             }
-            Text("v\(Config.appVersion) · 工作流").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-            Text("状态与处理记录保存在本机").font(.system(size: 9)).foregroundColor(.secondary).padding(.top, 4)
         }
-        .padding(.horizontal, 12).padding(.top, 46).padding(.bottom, 20)
-        .frame(width: 158)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(pages.first { $0.0 == page }?.1 ?? "任务总览").font(.system(size: 24, weight: .bold))
+                Text(Self.pages.first { $0.0 == activePage }?.1 ?? "任务总览").font(.system(size: 24, weight: .bold))
                 Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
             }
             Spacer()
-            if !["settings", "diagnostics", "sources"].contains(page) {
+            if !["settings", "diagnostics", "sources"].contains(activePage) {
                 Menu {
                     Button("静音 30 分钟") { preferences.value.muteUntil = Date().addingTimeInterval(1800) }
                     Button("静音 1 小时") { preferences.value.muteUntil = Date().addingTimeInterval(3600) }
@@ -173,8 +258,7 @@ struct TaskCenterView: View {
         }
     }
     private var subtitle: String {
-        switch page {
-        case "conversations": return "在主窗口发起任务，桌宠随时展示进展。"
+        switch activePage {
         case "pets": return "内置 5 只形象开箱即用，也可以导入自己的 GIF 并框选展示区域。"
         case "workflows": return "跟随真实日志，查看模型处理、工具调用与等待交互的执行过程。"
         case "history": return "查看跨回合记录和工作统计，旧日志可按需回填。"
@@ -195,7 +279,7 @@ struct TaskCenterView: View {
 
     private var filters: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if page == "overview" {
+            if activePage == "overview" {
                 HStack(spacing: 12) {
                     metric("需要处理", value: center.actionableCount, color: .orange)
                     metric("执行中", value: center.runningCount, color: .green)
@@ -244,11 +328,11 @@ struct TaskCenterView: View {
     private var taskContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                if page == "tasks" {
+                if activePage == "tasks" {
                     let tasks = center.tasks.filter(matches)
                     if tasks.isEmpty { empty("没有匹配的任务", detail: "调整筛选条件，或在已接入的 Agent 中开始一个回合。", icon: "tray") }
                     ForEach(tasks) { task in taskRow(task, attention: center.item(for: task.id)) }
-                } else if page == "snoozed" {
+                } else if activePage == "snoozed" {
                     let items = center.attentions.filter { $0.resolvedAt == nil && ($0.snoozedUntil ?? .distantPast) > Date() }
                     if items.isEmpty { empty("没有已延后的事项", detail: "需要稍后处理时，可以在任务上选择提醒时间。", icon: "clock.badge.checkmark") }
                     ForEach(items) { item in
@@ -487,7 +571,6 @@ struct TaskCenterView: View {
                     HStack {
                         Button("日常记录") { PetCompanion.shared.showNotes() }
                         Button("事项提醒") { PetCompanion.shared.showReminders() }
-                        Button("新建对话") { PetChatStore.shared.newChat() }
                     }
                     Menu("选择宠物形象") {
                         ForEach(PetSkin.allCases) { skin in

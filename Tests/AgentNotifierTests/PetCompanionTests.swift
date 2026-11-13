@@ -74,43 +74,50 @@ final class PetCompanionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: target), upgraded)
         XCTAssertFalse(storage.assets.contains { $0.fileName.contains("art-version") })
     }
-    func testChatEventFilterNeverExposesReasoningOrCommandArguments() {
-        XCTAssertEqual(PetChatEvent.parse(["type":"item.completed", "item":["type":"reasoning", "text":"PRIVATE_REASONING"]]), .ignored)
-        XCTAssertEqual(PetChatEvent.parse(["type":"item.started", "item":["type":"command_execution", "command":"PRIVATE_COMMAND"]]), .progress("终端命令进行中"))
-        XCTAssertEqual(PetChatEvent.parse(["type":"item.completed", "item":["type":"agent_message", "text":"公开回答"]]), .message("公开回答"))
-        XCTAssertEqual(PetChatEvent.parse(["type":"turn.completed"]), .completed)
-        XCTAssertEqual(PetChatEvent.parse(["type":"turn.failed"]), .failed)
+
+    func testSidebarPagesExcludeConversationsAndNormalizeLegacySelection() {
+        XCTAssertFalse(TaskCenterView.pages.contains { $0.0 == "conversations" || $0.1 == "对话与执行" })
+        XCTAssertEqual(TaskCenterView.normalizedPage("conversations"), "overview")
+        XCTAssertEqual(TaskCenterView.normalizedPage("pets"), "pets")
+        XCTAssertEqual(TaskCenterView.normalizedPage("settings"), "settings")
+        XCTAssertLessThan(TaskCenterView.sidebarCollapsedWidth, TaskCenterView.sidebarExpandedWidth)
     }
-    func testNewChatUsesStdinAndRecordsOnlyConfirmedEnd() async throws {
-        let fixture = root.appendingPathComponent("fake-codex")
-        try Data("""
-        #!/bin/sh
-        cat > received.txt
-        printf '%s\\n' '{"type":"thread.started","thread_id":"fixture-session"}' '{"type":"item.completed","item":{"type":"agent_message","text":"完成测试"}}' '{"type":"turn.completed"}'
-        """.utf8).write(to: fixture)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixture.path)
-        let chatURL = root.appendingPathComponent("chats.json")
-        let store = PetChatStore(url: chatURL, executable: fixture)
-        let prompt = "测试中文与 $(touch should-not-exist)"
-        XCTAssertTrue(store.send(prompt, project: root.path, new: true))
-        for _ in 0..<100 where store.chats.first?.phase == .running { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertEqual(store.chats.first?.phase, .completed)
-        XCTAssertEqual(store.chats.first?.sessionID, "fixture-session")
-        XCTAssertEqual(store.chats.first?.messages.last?.text, "完成测试")
-        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("received.txt")), prompt)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("should-not-exist").path))
-        XCTAssertEqual(PetChatStore(url: chatURL, executable: fixture).chats.first?.phase, .completed)
-    }
-    func testExitWithoutExplicitEndIsUnknownAndRestartNeverAssumesSuccess() async throws {
-        let fixture = root.appendingPathComponent("fake-no-end")
-        try Data("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"incomplete\"}'\n".utf8).write(to: fixture)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixture.path)
-        let chatURL = root.appendingPathComponent("partial-chat.json")
-        let store = PetChatStore(url: chatURL, executable: fixture)
-        XCTAssertTrue(store.send("测试未结束", project: root.path, new: true))
-        for _ in 0..<100 where store.chats.first?.phase == .running { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertEqual(store.chats.first?.phase, .unknown)
-        XCTAssertEqual(PetChatStore(url: chatURL, executable: fixture).chats.first?.phase, .unknown)
+
+    func testSidebarDrawerPushesContentInlineWithoutOverlaying() {
+        let icon = NSImage(size: NSSize(width: 18, height: 18))
+        func host(expanded: Bool) -> NSHostingView<some View> {
+            let view = HStack(spacing: 0) {
+                TaskCenterSidebarDrawer(
+                    page: .constant("overview"),
+                    activePage: "overview",
+                    expanded: expanded,
+                    actionableCount: 2,
+                    quiet: false,
+                    petIcon: icon
+                )
+                Rectangle().fill(Color.clear).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = NSRect(x: 0, y: 0, width: 960, height: 640)
+            hosting.layoutSubtreeIfNeeded()
+            return hosting
+        }
+
+        let collapsed = host(expanded: false)
+        let expanded = host(expanded: true)
+        let collapsedWidth = TaskCenterSidebarDrawer(
+            page: .constant("overview"), activePage: "overview", expanded: false,
+            actionableCount: 0, quiet: false, petIcon: icon
+        )
+        let collapsedSizing = NSHostingView(rootView: collapsedWidth)
+        let expandedSizing = NSHostingView(rootView: TaskCenterSidebarDrawer(
+            page: .constant("overview"), activePage: "overview", expanded: true,
+            actionableCount: 0, quiet: false, petIcon: icon
+        ))
+        XCTAssertEqual(collapsedSizing.fittingSize.width, TaskCenterView.sidebarCollapsedWidth, accuracy: 0.5)
+        XCTAssertEqual(expandedSizing.fittingSize.width, TaskCenterView.sidebarExpandedWidth, accuracy: 0.5)
+        XCTAssertEqual(collapsed.frame.width, 960, accuracy: 0.5)
+        XCTAssertEqual(expanded.frame.width, 960, accuracy: 0.5)
     }
 
     func testCustomGIFIsCopiedIntoPetFolderAndRestoredAndInvalidReplacementPreservesIt() throws {

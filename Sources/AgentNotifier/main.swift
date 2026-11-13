@@ -5090,7 +5090,7 @@ final class PetPanel: NSPanel {
         let open = NSMenuItem(title: "打开主窗口", action: #selector(petOpenMain), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        for (title, action) in [("新建对话", #selector(petNewChat)), ("日常记录", #selector(petNotes)), ("事项提醒", #selector(petReminders)),
+        for (title, action) in [("日常记录", #selector(petNotes)), ("事项提醒", #selector(petReminders)),
                                 ("任务进度跟踪", #selector(petTracking)), ("查看当前进度", #selector(petShowProgress))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
@@ -5143,7 +5143,6 @@ final class PetPanel: NSPanel {
         PetController.shared.openMainWindow?()
     }
     @objc private func petOpenFolder() { PetAppearance.shared.openFolder() }
-    @objc private func petNewChat() { PetChatPresenter.shared.show(near: frame) }
     @objc private func petNotes() { PetCompanion.shared.showNotes() }
     @objc private func petReminders() { PetCompanion.shared.showReminders() }
     @objc private func petShowProgress() { PetController.shared.showProgress() }
@@ -5205,14 +5204,7 @@ final class PetController {
         refreshProgressPanel()
     }
     func updateTasks(_ tasks: [TaskRecord], now: Date = Date()) {
-        let own = PetChatStore.shared.chats.filter { $0.phase == .running || now.timeIntervalSince($0.updatedAt) < 120 }.map { chat in
-            PetTaskProgress(id: "hakimi:" + chat.id, title: MonitorPreferences.shared.value.revealTitles ? chat.title : "当前任务", source: "哈基米 · Codex", phase: chat.phase,
-                steps: chat.progress.enumerated().map { index, text in
-                    WorkflowStep(id: chat.id + ":" + String(index), kind: .model, title: text, status: index == chat.progress.count - 1 && chat.phase == .running ? .active : .returned)
-                }, activity: chat.updatedAt)
-        }
-        let owned = Set(PetChatStore.shared.chats.compactMap { $0.sessionID }.map { "Codex:" + $0 })
-        progress.update(own + PetTaskProgress.collect(tasks.filter { !owned.contains($0.id) }, now: now, revealTitles: MonitorPreferences.shared.value.revealTitles))
+        progress.update(PetTaskProgress.collect(tasks, now: now, revealTitles: MonitorPreferences.shared.value.revealTitles))
         refreshProgressPanel()
     }
     func showProgress() {
@@ -5631,26 +5623,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
 
         // 桌宠：先于首个通知装配（Notify 包装器必须在任何 send 前就位）
         pet.start(openMainWindow: { [weak self] in self?.showWindow() })
-        PetChatStore.shared.openMainWindow = { [weak self] in self?.showWindow() }
-        PetChatStore.shared.terminal = { chat in
-            let settings = MonitorPreferences.shared.value
-            let finished = chat.phase == .completed
-            if finished { PetController.shared.model.react(to: .celebrate(sessionTitle: settings.revealTitles ? chat.title : nil)) }
-            else { PetController.shared.model.react(to: .sad(sessionTitle: settings.revealTitles ? chat.title : nil)) }
-            guard !settings.isQuiet(at: Date()), !settings.mutedSources.contains("Codex"), (finished ? settings.notifyCompleted : settings.notifyFailure) else { return }
-            let context = ["petChatID": chat.id, "event": finished ? "completed" : "failed", "kind": "Codex"]
-            Notify.sender(finished ? "本轮已结束 ✅" : "任务执行失败 ⛔️", settings.revealTitles ? chat.title : "打开哈基米查看任务", Notify.managedSoundName(audible: settings.sound, context: context), context)
-        }
-        PetChatStore.shared.changed = { [weak self] in
-            guard let self else { return }
-            self.pet.updateTasks(self.monitor.center.tasks)
-        }
         pet.openTask = { [weak self] id in
-            if id.hasPrefix("hakimi:") {
-                PetChatStore.shared.selectedID = String(id.dropFirst(7))
-                PetChatStore.shared.reveal()
-                return
-            }
             self?.showWindow()
             self?.monitor.center.requestedTaskID = id
         }
@@ -5681,7 +5654,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        PetChatStore.shared.shutdown()
         monitor.center.persist()
         monitor.center.flushPersistence()
     }
@@ -5714,10 +5686,8 @@ let path = info["path"] as? String
 let taskID = info["taskID"] as? String
 let attentionID = info["attentionID"] as? String
 let petNoteID = info["petNoteID"] as? String
-let petChatID = info["petChatID"] as? String
 Task { @MainActor in
     if petNoteID != nil { PetCompanion.shared.showNotes(); return }
-    if let petChatID { PetChatStore.shared.selectedID = petChatID; PetChatStore.shared.reveal(); return }
     if let delegate = Entry.delegate {
         UserDefaults.standard.set("overview", forKey: "r1.page")
         delegate.showWindow()
