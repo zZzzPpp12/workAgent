@@ -123,6 +123,7 @@ struct TaskCenterSidebarDrawer: View {
 
 struct TaskCenterView: View {
     @ObservedObject private var appearance = PetAppearance.shared
+    @ObservedObject private var processes = ProcessObserver.shared
     @ObservedObject var monitor: Monitor
     @ObservedObject var center: TaskCenterStore
     @ObservedObject var updater: UpdateChecker
@@ -412,6 +413,15 @@ struct TaskCenterView: View {
                         Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(1).foregroundColor(.primary)
                     }.buttonStyle(.plain).help(task.title)
                     Spacer(minLength: 8)
+                    if preferences.value.showProcessUsage,
+                       phase == .running,
+                       let attachment = processes.attachments[task.id],
+                       attachment.confidence.showsResourceUsage {
+                        Text(Self.usageText(attachment.group))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .help("进程旁路观测 · 只读")
+                    }
                     Text(phase.label).font(.system(size: 10, weight: .medium)).foregroundColor(phase.color)
                 }
                 Text("\(task.source) · \(projectLabel(task.project)) · \(relative(attention?.createdAt ?? task.activity))")
@@ -497,6 +507,12 @@ struct TaskCenterView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         diagnostic("最近扫描", center.lastScan.map(Self.time) ?? "尚未扫描")
                         diagnostic("扫描耗时", String(format: "%.0f ms", center.scanMilliseconds))
+                        diagnostic("进程观测", processes.enabled
+                            ? "已开启 · \(processes.processCount) 个进程 / \(processes.groupCount) 棵 Agent 树"
+                            : "已关闭")
+                        diagnostic("进程采样", processes.lastSample.map {
+                            "\(Self.time($0)) · \(String(format: "%.0f ms", processes.sampleDuration * 1000))"
+                        } ?? "尚未采样")
                         diagnostic("本地任务 / 处理记录", "\(center.tasks.count) / \(center.attentions.count)")
                         diagnostic("通知授权", center.permission)
                         diagnostic("数据保留", "\(preferences.value.retentionDays) 天 · 仅本应用数据")
@@ -557,6 +573,30 @@ struct TaskCenterView: View {
                             if on { preferences.value.mutedSources.remove(group.rawValue) } else { preferences.value.mutedSources.insert(group.rawValue) }
                         }))
                     }
+                }
+                settingGroup("进程观测") {
+                    Toggle("观察本机 Agent 进程（只读）", isOn: Binding(
+                        get: { preferences.value.observeProcesses },
+                        set: { preferences.value.observeProcesses = $0 }))
+                    Toggle("在任务列表显示资源占用", isOn: Binding(
+                        get: { preferences.value.showProcessUsage },
+                        set: { preferences.value.showProcessUsage = $0 }))
+                    Text("只读取本机同用户进程的 CPU、内存与可执行路径；命令行仅用于匹配会话，不保存、不显示、不上传。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                settingGroup("灵动岛") {
+                    Toggle("启用顶部通知", isOn: Binding(
+                        get: { preferences.value.islandEnabled },
+                        set: { preferences.value.islandEnabled = $0 }))
+                    Toggle("贴刘海显示（实验）", isOn: Binding(
+                        get: { preferences.value.islandNotchMode },
+                        set: { preferences.value.islandNotchMode = $0 }))
+                    Toggle("在全屏应用上显示", isOn: Binding(
+                        get: { preferences.value.islandOverFullScreen },
+                        set: { preferences.value.islandOverFullScreen = $0 }))
+                    Button("预览一条顶部通知") { IslandController.shared.preview() }
+                    Text("顶部通知不抢焦点；关闭后自动回退系统通知。")
+                        .font(.caption).foregroundColor(.secondary)
                 }
                 settingGroup("网络与隐私") {
                     Toggle("同步 CatDesk 服务端标题", isOn: $preferences.value.titlesEnabled)
@@ -696,6 +736,10 @@ struct TaskCenterView: View {
         return base + " · " + URL(fileURLWithPath: value).deletingLastPathComponent().path
     }
     static func time(_ date: Date) -> String { let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm:ss"; return f.string(from: date) }
+    static func usageText(_ group: AgentProcessGroup) -> String {
+        let memory = ByteCountFormatter.string(fromByteCount: Int64(group.rss), countStyle: .memory)
+        return "\(memory) · \(String(format: "%.0f%%", group.cpuPercent))"
+    }
 }
 
 func relative(_ date: Date) -> String {
@@ -728,6 +772,7 @@ private struct ClipboardFeedbackView: View {
 struct TaskDetailView: View {
     @ObservedObject var center: TaskCenterStore
     @ObservedObject var history: HistoryModel
+    @ObservedObject private var processes = ProcessObserver.shared
     let taskID: String
     let attentionID: String?
     @Environment(\.dismiss) private var dismiss
@@ -783,6 +828,7 @@ struct TaskDetailView: View {
 
     private func taskInformation(_ task: TaskRecord) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            processInformation(task)
             info("来源", task.source)
             info("项目", task.project)
             info("会话", task.sessionID)
@@ -806,6 +852,32 @@ struct TaskDetailView: View {
     }
     private func info(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top) { Text(label).foregroundColor(.secondary).frame(width: 72, alignment: .leading); Text(value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.font(.system(size: 12))
+    }
+
+    private func processInformation(_ task: TaskRecord) -> some View {
+        HStack(alignment: .top) {
+            Text("进程").foregroundColor(.secondary).frame(width: 72, alignment: .leading)
+            if let attachment = processes.attachments[task.id] {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(processSummary(attachment.group)).textSelection(.enabled)
+                    Text("归属：\(attachment.confidence.label) · \(attachment.evidence)")
+                        .font(.caption).foregroundColor(.secondary)
+                    Text("最近采样 \(processes.lastSample.map(TaskCenterView.time) ?? "尚未采样") · 只读观测")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("未发现对应进程").foregroundColor(.secondary)
+                    Text("可能已在终端结束，或该来源不提供 CLI 进程；日志状态不受影响。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }.font(.system(size: 12))
+    }
+
+    private func processSummary(_ group: AgentProcessGroup) -> String {
+        "运行中 · PID \(group.rootPID) · \(TaskCenterView.usageText(group)) · 进程树 \(group.pids.count) 个"
     }
 }
 

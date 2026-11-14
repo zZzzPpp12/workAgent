@@ -5628,8 +5628,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             self?.monitor.center.requestedTaskID = id
         }
         monitor.history.start()
+        IslandController.shared.start(center: monitor.center) { [weak self] taskID, attentionID in
+            guard let self else { return }
+            UserDefaults.standard.set("overview", forKey: "r1.page")
+            self.showWindow()
+            self.monitor.center.requestedAttentionID = attentionID
+            self.monitor.center.requestedTaskID = taskID
+        }
+        ProcessObserver.shared.start(tasks: { [weak self] in self?.monitor.center.tasks ?? [] })
         monitor.center.deliver = { title, body, audible, context in
-            Notify.sender(title, body, Notify.managedSoundName(audible: audible, context: context), context)
+            let sound = Notify.managedSoundName(audible: audible, context: context)
+            let deliver = {
+                if IslandController.shared.handleNotification(
+                    title: title, body: body, audible: audible, sound: sound, context: context) {
+                    return
+                }
+                Notify.sender(title, body, sound, context)
+            }
+            if Thread.isMainThread {
+                deliver()
+            } else {
+                DispatchQueue.main.async(execute: deliver)
+            }
         }
 
         rebuildMenu()
@@ -5654,6 +5674,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ProcessObserver.shared.stop()
+        IslandController.shared.stop()
         monitor.center.persist()
         monitor.center.flushPersistence()
     }
@@ -5713,6 +5735,9 @@ completionHandler()
         if Date().timeIntervalSince(lastTickAt) > 60 { monitor.center.resume() }
         lastTickAt = Date()
         monitor.scanAndPoll()
+        ProcessObserver.shared.setEnabled(MonitorPreferences.shared.value.observeProcesses)
+        ProcessObserver.shared.refreshIfNeeded()
+        IslandController.shared.refresh()
         pet.tickStatus(runningCount: monitor.runningCount, quota: monitor.codexQuota)
         pet.updateTasks(monitor.center.tasks)
         PetCompanion.shared.tick()

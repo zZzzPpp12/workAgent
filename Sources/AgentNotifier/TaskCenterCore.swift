@@ -83,6 +83,34 @@ struct MonitorSettings: Codable, Equatable {
     var hoverMenu = false
     var retentionDays = 30
 
+    // 新增开关使用可选存储：旧版设置 JSON 缺少这些键时仍能解码，不会整体回退默认值。
+    var observeProcessesRaw: Bool?
+    var showProcessUsageRaw: Bool?
+    var islandEnabledRaw: Bool?
+    var islandNotchModeRaw: Bool?
+    var islandOverFullScreenRaw: Bool?
+
+    var observeProcesses: Bool {
+        get { observeProcessesRaw ?? true }
+        set { observeProcessesRaw = newValue }
+    }
+    var showProcessUsage: Bool {
+        get { showProcessUsageRaw ?? false }
+        set { showProcessUsageRaw = newValue }
+    }
+    var islandEnabled: Bool {
+        get { islandEnabledRaw ?? true }
+        set { islandEnabledRaw = newValue }
+    }
+    var islandNotchMode: Bool {
+        get { islandNotchModeRaw ?? false }
+        set { islandNotchModeRaw = newValue }
+    }
+    var islandOverFullScreen: Bool {
+        get { islandOverFullScreenRaw ?? true }
+        set { islandOverFullScreenRaw = newValue }
+    }
+
     func isQuiet(at now: Date, calendar: Calendar = .current) -> Bool {
         if let until = muteUntil, until > now { return true }
         guard quietEnabled else { return false }

@@ -14,9 +14,13 @@ let package = Package(
         //                     .headerSearchPath("common"),
         //                     .headerSearchPath("decompress")]),
         // main.swift 侧已有 #if canImport(LibZSTD) 守护，恢复后 dsh 面板自动生效
+        .target(
+            name: "CProcInfo",
+            path: "Sources/CProcInfo"
+        ),
         .executableTarget(
             name: "AgentNotifier",
-            dependencies: [],
+            dependencies: ["CProcInfo"],
             path: "Sources/AgentNotifier"
         ),
         .testTarget(
